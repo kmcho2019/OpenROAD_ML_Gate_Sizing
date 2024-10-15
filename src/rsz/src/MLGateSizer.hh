@@ -1,13 +1,13 @@
-#ifndef RSZ_ML_GATE_SIZER_HH
-#define RSZ_ML_GATE_SIZER_HH
+#pragma once
 
 #include <Eigen/Dense>
+#include "Resizer.hh"
 #include <vector>
 #include <string>
 
 namespace rsz {
 
-class MLGateSizer {
+class MLGateSizer : public Resizer{
  public:
   MLGateSizer();
   
@@ -16,6 +16,8 @@ class MLGateSizer {
   void classifyAndResize();
 
  private:
+  void extractWorstPaths();
+  void transformPinDataToTokens();
   void applyTransformerModel();
   void feedforwardNetwork(Eigen::MatrixXf& input);
   void resizeGates();
@@ -27,5 +29,4 @@ class MLGateSizer {
 
 } // namespace rsz
 
-#endif
 

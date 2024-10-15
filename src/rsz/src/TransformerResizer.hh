@@ -1,5 +1,4 @@
-#ifndef RSZ_TRANSFORMER_RESIZER_HH
-#define RSZ_TRANSFORMER_RESIZER_HH
+#pragma once
 
 #include "MLGateSizer.hh"
 #include "Resizer.hh"
@@ -26,5 +25,5 @@ class TransformerResizer : public Resizer {
 
 } // namespace rsz
 
-#endif
+
 
