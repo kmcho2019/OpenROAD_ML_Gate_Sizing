@@ -1,5 +1,5 @@
-#include "rsz/TransformerResizer.hh"
-#include "rsz/MLGateSizer.hh"
+#include "TransformerResizer.hh"
+#include "MLGateSizer.hh"
 
 namespace rsz {
 
