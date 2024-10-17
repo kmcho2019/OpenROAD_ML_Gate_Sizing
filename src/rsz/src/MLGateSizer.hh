@@ -15,6 +15,9 @@ class MLGateSizer : public Resizer{
   void addToken(const std::vector<float>& pin_data, const std::string& gate_type);
   void classifyAndResize();
 
+  // Function to retrieve endpoints and critical paths (also used for debugging)
+  void getEndpointsAndCriticalPaths();
+
  private:
   void extractWorstPaths();
   void transformPinDataToTokens();
