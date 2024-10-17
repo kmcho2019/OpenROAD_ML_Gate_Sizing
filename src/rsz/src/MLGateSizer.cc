@@ -94,5 +94,45 @@ void MLGateSizer::resizeGates()
   }
 }
 
+void MLGateSizer::getEndpointsAndCriticalPaths()
+{
+  // Retrieve endpoints and critical paths for debugging or further analysis
+
+  Sta* sta = getSta();
+  Network* network = sta->network();
+  Graph* graph = sta->ensureGraph();
+
+  // Retrieve endpoints
+  PinSet endpoints = sta->endpoints();
+
+  if (endpoints.empty()) {
+    std::cout << "No endpoints found." << std::endl;
+
+    return;
+  } else {
+    std::cout << "Found " << endpoints.size() << " endpoints." << std::endl;
+
+    // Iterate through each endpoint and retrieve the critical path for each endpoint
+    for (const Pin* endpoint : endpoints) {
+      std::string endpoint_name = network->name(endpoint);
+      std::cout << "Endpoint: " << endpoint_name << std::endl;
+
+      PathEndSeq path_ends = sta->findPathEnds(
+        nullptr, nullptr, new ExceptionTo(endpoint), false, nullptr,
+        MinMaxAll::max(), 1, 1, false, -1e30, 1e30, true, nullptr,
+        true, false, false, false, false, false);
+
+      if (path_ends.empty()) {
+        std::cout << "No critical path found for endpoint " << endpoint_name << std::endl;
+      } else {
+        for (const PathEnd* path_end : path_ends) {
+          path_end->reportPath(std::cout, network, graph, 2);
+        }
+      }
+    }
+
+  }
+}
+
 } // namespace rsz
 
