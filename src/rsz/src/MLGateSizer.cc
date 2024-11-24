@@ -83,7 +83,7 @@ void MLGateSizer::feedforwardNetwork(Eigen::MatrixXf& input)
   // Apply activation functions, attention mechanisms, etc.
 }
 
-void MLGateSizer::resizeGates()
+void MLGateSizer::resizewithML()
 {
   // Based on the output from the transformer model, resize gates
   for (size_t i = 0; i < gate_types_.size(); ++i) {
@@ -94,7 +94,7 @@ void MLGateSizer::resizeGates()
   }
 }
 
-void MLGateSizer::getEndpointsAndCriticalPaths()
+void MLGateSizer::getEndpointAndCriticalPaths()
 {
   // Retrieve endpoints and critical paths for debugging or further analysis
 

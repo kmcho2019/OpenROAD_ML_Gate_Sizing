@@ -806,6 +806,16 @@ set_worst_slack_nets_percent(float percent)
   resizer->setWorstSlackNetsPercent(percent);
 }
 
+void
+get_endpoints_and_critical_paths_cmd()
+{
+  ensureLinked();
+  Resizer *resizer = getResizer();
+  resizer->getEndpointAndCriticalPaths();
+}
+
+
+
 } // namespace
 
 %} // inline
