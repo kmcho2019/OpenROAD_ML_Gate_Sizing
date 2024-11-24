@@ -682,6 +682,13 @@ sta::proc_redirect report_long_wires {
   rsz::report_long_wires_cmd $count $digits
 }
 
+sta::define_cmd_args "get_endpoints_and_critical_paths" {}
+
+proc get_endpoints_and_critical_paths {args} {
+
+  rsz::get_endpoints_and_critical_paths_cmd
+}
+
 namespace eval rsz {
 
 # for testing

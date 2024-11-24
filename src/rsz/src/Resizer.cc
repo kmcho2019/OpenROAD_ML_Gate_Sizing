@@ -45,6 +45,7 @@
 #include "RepairDesign.hh"
 #include "RepairHold.hh"
 #include "RepairSetup.hh"
+#include "MLGateSizer.hh"
 #include "boost/multi_array.hpp"
 #include "db_sta/dbNetwork.hh"
 #include "sta/ArcDelayCalc.hh"
@@ -130,6 +131,7 @@ Resizer::Resizer()
       repair_design_(new RepairDesign(this)),
       repair_setup_(new RepairSetup(this)),
       repair_hold_(new RepairHold(this)),
+      ml_sizer_(new MLGateSizer(this)),
       wire_signal_res_(0.0),
       wire_signal_cap_(0.0),
       wire_clk_res_(0.0),
@@ -2854,6 +2856,22 @@ void Resizer::recoverPower(float recover_power_percent)
     opendp_->initMacrosAndGrid();
   }
   recover_power_->recoverPower(recover_power_percent);
+}
+////////////////////////////////////////////////////////////////
+void Resizer::loadWeights(const std::string& weight_file_path)
+{
+  resizePreamble();
+  ml_sizer_->loadWeights(weight_file_path);
+}
+void Resizer::getEndpointAndCriticalPaths()
+{
+  resizePreamble();
+  ml_sizer_->getEndpointAndCriticalPaths();
+}
+void Resizer::resizewithML()
+{
+  resizePreamble();
+  ml_sizer_->resizewithML();
 }
 ////////////////////////////////////////////////////////////////
 // Journal to roll back changes (OpenDB not up to the task).

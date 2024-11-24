@@ -138,6 +138,8 @@ class RepairHold;
 
 class SpefWriter;
 
+class MLGateSizer; 
+
 class NetHash
 {
  public:
@@ -408,6 +410,12 @@ class Resizer : public dbStaState
   void makeEquivCells();
 
   ////////////////////////////////////////////////////////////////
+  // MLGateSizer API
+  void loadWeights(const std::string& weight_file_path);
+  void getEndpointAndCriticalPaths();
+  void resizewithML();
+
+  ////////////////////////////////////////////////////////////////
   void journalBeginTest();
   void journalRestoreTest();
   Logger* logger() const { return logger_; }
@@ -673,6 +681,7 @@ class Resizer : public dbStaState
   RepairDesign* repair_design_;
   RepairSetup* repair_setup_;
   RepairHold* repair_hold_;
+  MLGateSizer* ml_sizer_;
   std::unique_ptr<AbstractSteinerRenderer> steiner_renderer_;
 
   // Layer RC per wire length indexed by layer->getNumber(), corner->index
@@ -764,6 +773,7 @@ class Resizer : public dbStaState
   friend class RepairSetup;
   friend class RepairHold;
   friend class SteinerTree;
+  friend class MLGateSizer;
 };
 
 }  // namespace rsz
