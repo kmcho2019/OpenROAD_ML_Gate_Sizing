@@ -146,6 +146,7 @@ Resizer::~Resizer()
   delete repair_design_;
   delete repair_setup_;
   delete repair_hold_;
+  delete ml_sizer_;
 }
 
 void Resizer::init(Logger* logger,
@@ -2868,11 +2869,13 @@ void Resizer::getEndpointAndCriticalPaths()
   resizePreamble();
   ml_sizer_->getEndpointAndCriticalPaths();
 }
+/*
 void Resizer::resizewithML()
 {
   resizePreamble();
   ml_sizer_->resizewithML();
 }
+*/
 ////////////////////////////////////////////////////////////////
 // Journal to roll back changes (OpenDB not up to the task).
 void Resizer::journalBegin()

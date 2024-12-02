@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Eigen/Dense>  
+// #include <Eigen/Dense>  
 #include "db_sta/dbSta.hh" // Includes taken from RecoverPower.hh
 #include "sta/FuncExpr.hh"
 #include "sta/Graph.hh"
@@ -48,22 +48,27 @@ class MLGateSizer : public sta::dbStaState
   
   void loadWeights(const std::string& weight_file);
   void addToken(const std::vector<float>& pin_data, const std::string& gate_type);
-  void classifyAndResize();
+  // void classifyAndResize();
 
   // Function to retrieve endpoints and critical paths (also used for debugging)
   void getEndpointAndCriticalPaths();
-  void resizewithML();
+  // void resizewithML();
 
  private:
-  void extractWorstPaths();
-  void transformPinDataToTokens();
-  void applyTransformerModel();
-  void feedforwardNetwork(Eigen::MatrixXf& input);
+  void init();
+  // void extractWorstPaths();
+  // void transformPinDataToTokens();
+  // void applyTransformerModel();
+  // void feedforwardNetwork(Eigen::MatrixXf& input);
+
+  Logger* logger_ = nullptr;
+  dbNetwork* network_ = nullptr;
+  Resizer* resizer_;
 
 
   std::vector<std::vector<float>> pin_tokens_;
   std::vector<std::string> gate_types_;
-  Eigen::MatrixXf transformer_weights_;
+  // Eigen::MatrixXf transformer_weights_;
 };
 
 } // namespace rsz
