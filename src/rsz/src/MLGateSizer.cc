@@ -15,6 +15,7 @@
 #include "sta/PathVertex.hh"
 #include "sta/PortDirection.hh"
 #include "sta/Sdc.hh"
+#include "sta/Search.hh"
 #include "sta/TimingArc.hh"
 #include "sta/Units.hh"
 #include "utl/Logger.h"
@@ -131,16 +132,65 @@ void MLGateSizer::getEndpointAndCriticalPaths()
   // Print out statement to indicate the function is running
   std::cout << "Retrieving endpoints and critical paths..." << std::endl;
 
-  // Tempoarily commented out to avoid compilation errors, try to fix later
-  /* 
+
   // Retrieve endpoints and critical paths for debugging or further analysis
   init();
-  Network* network = sta_->network();
-  Graph* graph = sta_->ensureGraph();
+  sta::Network* network = sta_->network();
+  sta::Graph* graph = sta_->ensureGraph();
 
   // Retrieve endpoints
-  PinSet endpoints = sta_->endpoints();
+  sta::VertexSet* endpoints = sta_->endpoints();
 
+  sta::PinSet* pinset = new sta::PinSet(network);
+
+  // Print out the number of endpoints found
+  std::cout << "Found " << endpoints->size() << " endpoints." << std::endl;
+
+  // Iterate through first 10 endpoints terminate early if there aren't enough
+  int count = 0;
+  for (const Vertex* endpoint : *endpoints) {
+    if (count >= 10) {
+      break;
+    }
+
+    // Retrieve the name of the endpoint
+    std::string endpoint_name = network->name(endpoint->pin());
+    std::cout << "Endpoint (Vertex): " << endpoint->name(network_) << std::endl;
+    std::cout << "Endpoint (Pin): " << endpoint_name << std::endl;
+
+    // Add the endpoint to the pinset
+    pinset->insert(endpoint->pin());
+
+
+    // Increment the count
+    count++;
+  }
+
+/*
+  std::ExceptionTo* exception_to = new sta::ExceptionTo(pinset, nullptr, nullptr, nullptr, nullptr, true, network);
+
+  // Retrieve the critical path for the endpoint
+  sta::PathEndSeq path_ends = sta_->search()->findPathEnds(
+    nullptr, nullptr, new sta::ExceptionTo(endpoint), false, nullptr,
+    sta::MinMaxAll::max(), 1, 1, false, -1e30, 1e30, true, nullptr,
+    true, false, false, false, false, false);
+
+  // If no critical path is found, print a message
+  if (path_ends.empty()) {
+    std::cout << "No critical path found for endpoint " << endpoint_name << std::endl;
+  } else {
+    // Print out the critical path
+    for (const sta::PathEnd* path_end : path_ends) {
+      path_end->reportPath(std::cout, network, graph, 2);
+    }
+  }
+
+*/
+
+
+
+  // Tempoarily commented out to avoid compilation errors, try to fix later
+  /* 
   if (endpoints.empty()) {
     std::cout << "No endpoints found." << std::endl;
     return;

@@ -35,10 +35,13 @@ using sta::Net;
 using sta::PathExpanded;
 using sta::PathRef;
 using sta::Pin;
+using sta::PinSeq;
+using sta::PinSet;
 using sta::Slack;
 using sta::StaState;
 using sta::TimingArc;
 using sta::Vertex;
+using sta::VertexSet;
 
 
 class MLGateSizer : public sta::dbStaState
