@@ -10,6 +10,7 @@
 #include "sta/InputDrive.hh"
 #include "sta/Liberty.hh"
 #include "sta/Parasitics.hh"
+#include "sta/PathEnd.hh"
 #include "sta/PathExpanded.hh"
 #include "sta/PathRef.hh"
 #include "sta/PathVertex.hh"
@@ -135,13 +136,13 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
   // Retrieve endpoints and critical paths for debugging or further analysis
   init();
-  sta::Network* network = sta_->network();
-  sta::Graph* graph = sta_->ensureGraph();
+  //sta::Network* network = sta_->network();
+  //sta::Graph* graph = sta_->graph();
 
   // Retrieve endpoints
   sta::VertexSet* endpoints = sta_->endpoints();
 
-  sta::PinSet* pinset = new sta::PinSet(network);
+  sta::PinSet* pinset = new sta::PinSet(network_);
 
   // Print out the number of endpoints found
   std::cout << "Found " << endpoints->size() << " endpoints." << std::endl;
@@ -154,7 +155,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     }
 
     // Retrieve the name of the endpoint
-    std::string endpoint_name = network->name(endpoint->pin());
+    std::string endpoint_name = network_->name(endpoint->pin());
     std::cout << "Endpoint (Vertex): " << endpoint->name(network_) << std::endl;
     std::cout << "Endpoint (Pin): " << endpoint_name << std::endl;
 
@@ -166,26 +167,73 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     count++;
   }
 
-/*
-  std::ExceptionTo* exception_to = new sta::ExceptionTo(pinset, nullptr, nullptr, nullptr, nullptr, true, network);
+  std:: cout << "Debug Point 1" << std::endl;
+  sta::ExceptionTo* exception_to = new sta::ExceptionTo(pinset, nullptr, nullptr, nullptr, nullptr, true, network_);
+  std:: cout << "Debug Point 2" << std::endl;
+
+  // Check if exception_to is properly initialized
+  if (exception_to == nullptr) {
+    std::cout << "ExceptionTo is null" << std::endl;
+  } else {
+    std::cout << "ExceptionTo is not null" << std::endl;
+  }
+  // Check if pinset is properly initialized
+  if (pinset == nullptr) {
+    std::cout << "Pinset is null" << std::endl;
+  } else {
+    std::cout << "Pinset is not null" << std::endl;
+    std::cout << "Pinset size: " << pinset->size() << std::endl;
+  }
 
   // Retrieve the critical path for the endpoint
   sta::PathEndSeq path_ends = sta_->search()->findPathEnds(
-    nullptr, nullptr, new sta::ExceptionTo(endpoint), false, nullptr,
-    sta::MinMaxAll::max(), 1, 1, false, -1e30, 1e30, true, nullptr,
-    true, false, false, false, false, false);
-
+    nullptr, 
+    nullptr, 
+    nullptr, //exception_to, // test if exception_to is causing the issue
+    false, 
+    sta_->cmdCorner(),
+    sta::MinMaxAll::max(), 
+    10, //group_count
+    10, //endpoint_count
+    true, //unique_pins
+    -sta::INF, 
+    sta::INF, // slack_min, slack_max
+    true, // sort_by_slack
+    nullptr,  // group_names
+    true, 
+    false, 
+    false, 
+    false, 
+    false, 
+    false);
+  std::cout << "Debug Point 3" << std::endl;
   // If no critical path is found, print a message
   if (path_ends.empty()) {
-    std::cout << "No critical path found for endpoint " << endpoint_name << std::endl;
+    std::cout << "No critical paths found " << std::endl;
   } else {
     // Print out the critical path
-    for (const sta::PathEnd* path_end : path_ends) {
-      path_end->reportPath(std::cout, network, graph, 2);
+    //for (const sta::PathEnd* path_end : path_ends) {
+    //  path_end->reportPath(std::cout, network_, graph, 2);
+    //}
+    int path_count = 0;
+    for (auto& path_end : path_ends) { // similar usage found in TritonPart.cpp BuildTimingPaths()
+      std::cout << "Critical Path " << path_count << std::endl;
+      auto* path = path_end->path();
+      float slack = path_end->slack(sta_);
+      std::cout << "Slack: " << slack << std::endl;
+      sta::PathExpanded expand(path, sta_);
+      expand.path(expand.size() - 1);
+      for (size_t i = 0; i < expand.size(); i++) {
+        // PathRef is reference to a path vertex
+        sta::PathRef* ref = expand.path(i);
+        sta::Pin* pin = ref->vertex(sta_)->pin();
+        std::cout << "Pin: " << network_->name(pin) << std::endl;
+      }
+      path_count++;
     }
   }
 
-*/
+
 
 
 
@@ -199,7 +247,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
     // Iterate through each endpoint and retrieve the critical path for each endpoint
     for (const Pin* endpoint : endpoints) {
-      std::string endpoint_name = network->name(endpoint);
+      std::string endpoint_name = network_->name(endpoint);
       std::cout << "Endpoint: " << endpoint_name << std::endl;
 
       PathEndSeq path_ends = sta->findPathEnds(
@@ -211,7 +259,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         std::cout << "No critical path found for endpoint " << endpoint_name << std::endl;
       } else {
         for (const PathEnd* path_end : path_ends) {
-          path_end->reportPath(std::cout, network, graph, 2);
+          path_end->reportPath(std::cout, network_, graph, 2);
         }
       }
     }
