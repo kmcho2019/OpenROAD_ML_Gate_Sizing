@@ -105,6 +105,7 @@ set(TEST_NAMES
     repair_wire9
     repair_wire10
     repair_wire11
+    resize_ml1
     gcd_resize
     repair_design3_verbose
     repair_setup4_verbose
