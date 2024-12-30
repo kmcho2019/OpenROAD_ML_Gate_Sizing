@@ -192,7 +192,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     nullptr, //exception_to, // test if exception_to is causing the issue
     false, 
     sta_->cmdCorner(),
-    sta::MinMaxAll::max(), 
+    sta::MinMaxAll::max(), // using min leads to no critical paths found
     10, //group_count
     10, //endpoint_count
     true, //unique_pins
@@ -216,10 +216,13 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     //  path_end->reportPath(std::cout, network_, graph, 2);
     //}
     int path_count = 0;
+    // Declare tempoary vector to store the slack of each path
+    std::vector<float> path_slacks;
     for (auto& path_end : path_ends) { // similar usage found in TritonPart.cpp BuildTimingPaths()
       std::cout << "Critical Path " << path_count << std::endl;
       auto* path = path_end->path();
       float slack = path_end->slack(sta_);
+      path_slacks.push_back(slack);
       std::cout << "Slack: " << slack << std::endl;
       sta::PathExpanded expand(path, sta_);
       expand.path(expand.size() - 1);
@@ -231,7 +234,20 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       }
       path_count++;
     }
+    // Print out the slack of each path (for debugging), remove later
+    for (size_t i = 0; i < path_slacks.size(); i++) {
+      std::cout << "Path " << i << " Slack: " << path_slacks[i] << std::endl;
+    }
   }
+
+  // In addition or alternatively, 
+  // consider using vertexWorstSlackPath to find the critical path for each endpoint
+
+  // Next step is extracting the data from each pin
+  // Then, transform the data into the format expected by the transformer model
+  // Finally, apply the transformer model to classify and resize the gates
+
+  // Use PinMetrics and PinDataSequence to store the extracted data
 
 
 

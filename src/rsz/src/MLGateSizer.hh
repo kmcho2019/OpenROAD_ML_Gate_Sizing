@@ -43,11 +43,31 @@ using sta::TimingArc;
 using sta::Vertex;
 using sta::VertexSet;
 
+// Forward declaration of PinMetrics to avoid circular dependencies if Resizer needs to know about it.
+struct PinMetrics;
+
+// Type alias for a sequence of PinMetrics (for better readability)
+using PinDataSequence = std::vector<PinMetrics>;
+
 
 class MLGateSizer : public sta::dbStaState
 {
  public:
   MLGateSizer(Resizer* resizer);
+
+  // Structure to represent the metrics associated with a single pin
+  struct PinMetrics {
+      std::string pinName;
+      double pin_tran;
+      double slack;
+      double input_pin_cap;
+      double output_pin_cap;
+      double load_cap;
+
+      // Constructor for easier initialization
+      PinMetrics(const std::string& name, double tran, double slack, double in_cap, double out_cap, double load_cap)
+          : pinName(name), pin_tran(tran), slack(slack), input_pin_cap(in_cap), output_pin_cap(out_cap), load_cap(load_cap) {};
+  };  
   
   void loadWeights(const std::string& weight_file);
   void addToken(const std::vector<float>& pin_data, const std::string& gate_type);
