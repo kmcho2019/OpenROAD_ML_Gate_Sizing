@@ -33,7 +33,7 @@ void MLGateSizer::init()
 {
   logger_ = resizer_->logger_;
   dbStaState::init(resizer_->sta_);
-  network_ = resizer_->db_network_; // Need to fix this to db_network_ = resizer_->db_network_;
+  db_network_ = resizer_->db_network_; 
 }
 
 void MLGateSizer::loadWeights(const std::string& weight_file)
@@ -235,7 +235,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         // Data to extract from pin:
         //[x, y, p2p_dist, hpwl, wire_cap, arc_delay, fanout, reach_end, gate_type_id, mdelay, num_refs]
         // X, Y coordinates of the pin
-        Point pin_loc = network_->location(pin); // db_network_->location(pin);
+        Point pin_loc = db_network_->location(pin); 
         std::cout << "X: " << pin_loc.x() << std::endl;
         std::cout << "Y: " << pin_loc.y() << std::endl;
 

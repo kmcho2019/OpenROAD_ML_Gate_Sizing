@@ -85,7 +85,7 @@ class MLGateSizer : public sta::dbStaState
   // void feedforwardNetwork(Eigen::MatrixXf& input);
 
   Logger* logger_ = nullptr;
-  dbNetwork* network_ = nullptr;
+  dbNetwork* db_network_ = nullptr;
   Resizer* resizer_;
 
 
