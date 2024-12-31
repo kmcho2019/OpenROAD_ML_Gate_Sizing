@@ -33,7 +33,7 @@ void MLGateSizer::init()
 {
   logger_ = resizer_->logger_;
   dbStaState::init(resizer_->sta_);
-  network_ = resizer_->db_network_;
+  network_ = resizer_->db_network_; // Need to fix this to db_network_ = resizer_->db_network_;
 }
 
 void MLGateSizer::loadWeights(const std::string& weight_file)
@@ -230,7 +230,25 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         // PathRef is reference to a path vertex
         sta::PathRef* ref = expand.path(i);
         sta::Pin* pin = ref->vertex(sta_)->pin();
-        std::cout << "Pin: " << network_->name(pin) << std::endl;
+        // Pin name
+        std::cout << "Pin(" << path_count << "-" << i << "): " << network_->name(pin) << std::endl;
+        // Data to extract from pin:
+        //[x, y, p2p_dist, hpwl, wire_cap, arc_delay, fanout, reach_end, gate_type_id, mdelay, num_refs]
+        // X, Y coordinates of the pin
+        Point pin_loc = network_->location(pin); // db_network_->location(pin);
+        std::cout << "X: " << pin_loc.x() << std::endl;
+        std::cout << "Y: " << pin_loc.y() << std::endl;
+
+        // Slack of the pin
+        std::cout << "Slack (max):" << sta_->pinSlack(pin, sta::MinMax::max()) << std::endl;
+        std::cout << "Slack (min):" << sta_->pinSlack(pin, sta::MinMax::min()) << std::endl;
+        
+        std::cout << "Rise Slack (max):" << sta_->pinSlack(pin, sta::RiseFall::rise(), sta::MinMax::max()) << std::endl;
+        std::cout << "Fall Slack (max):" << sta_->pinSlack(pin, sta::RiseFall::fall(), sta::MinMax::max()) << std::endl;
+        std::cout << "Rise Slack (min):" << sta_->pinSlack(pin, sta::RiseFall::rise(), sta::MinMax::min()) << std::endl;
+        std::cout << "Fall Slack (min):" << sta_->pinSlack(pin, sta::RiseFall::fall(), sta::MinMax::min()) << std::endl;
+
+        std::cout << std::endl;
       }
       path_count++;
     }
@@ -248,6 +266,9 @@ void MLGateSizer::getEndpointAndCriticalPaths()
   // Finally, apply the transformer model to classify and resize the gates
 
   // Use PinMetrics and PinDataSequence to store the extracted data
+
+
+
 
 
 
