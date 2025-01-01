@@ -1,5 +1,7 @@
 #include "MLGateSizer.hh"
 
+#include <iostream>
+
 #include "db_sta/dbNetwork.hh"
 #include "rsz/Resizer.hh"
 #include "sta/Corner.hh"
@@ -20,11 +22,10 @@
 #include "sta/TimingArc.hh"
 #include "sta/Units.hh"
 #include "utl/Logger.h"
-#include <iostream>
 
 namespace rsz {
 
-MLGateSizer::MLGateSizer(Resizer* resizer) : resizer_(resizer) 
+MLGateSizer::MLGateSizer(Resizer* resizer) : resizer_(resizer)
 {
   // Initialize model, load weights, etc.
 }
@@ -33,7 +34,7 @@ void MLGateSizer::init()
 {
   logger_ = resizer_->logger_;
   dbStaState::init(resizer_->sta_);
-  db_network_ = resizer_->db_network_; 
+  db_network_ = resizer_->db_network_;
 }
 
 void MLGateSizer::loadWeights(const std::string& weight_file)
@@ -42,14 +43,15 @@ void MLGateSizer::loadWeights(const std::string& weight_file)
   // Example: transformer_weights_ = LoadFromPyTorch(weight_file);
 }
 
-void MLGateSizer::addToken(const std::vector<float>& pin_data, const std::string& gate_type)
+void MLGateSizer::addToken(const std::vector<float>& pin_data,
+                           const std::string& gate_type)
 {
   pin_tokens_.push_back(pin_data);
   gate_types_.push_back(gate_type);
 }
 
-// Eigen-related and sta_-related errors seem to exist in the following functions
-// Commented out for now to avoid compilation errors, try to fix later
+// Eigen-related and sta_-related errors seem to exist in the following
+// functions Commented out for now to avoid compilation errors, try to fix later
 /*
   void MLGateSizer::classifyAndResize()
   {
@@ -57,7 +59,7 @@ void MLGateSizer::addToken(const std::vector<float>& pin_data, const std::string
     extractWorstPaths();
     // Transform pin data into the format expected by the transformer model
     applyTransformerModel();
-    
+
     // Once classification is done, resize gates based on predictions
     //resizeGates();
   }
@@ -76,18 +78,19 @@ void MLGateSizer::addToken(const std::vector<float>& pin_data, const std::string
         float cap = sta_->cap(pin);
         float slack = sta_->slack(pin);
         std::string gate_type = sta_->gateType(pin);
-        
+
         // Collect data for ML model
         transformPinDataToTokens(pin, slew, cap, slack, gate_type);
       }
     }
   }
 
-  void MLGateSizer::transformPinDataToTokens(const Pin* pin, float slew, float cap, float slack, const std::string& gate_type)
+  void MLGateSizer::transformPinDataToTokens(const Pin* pin, float slew, float
+  cap, float slack, const std::string& gate_type)
   {
-    // Turn the extracted pin data into tokens that can be used by the transformer model
-    std::vector<float> tokenized_data = {slew, cap, slack};
-    
+    // Turn the extracted pin data into tokens that can be used by the
+  transformer model std::vector<float> tokenized_data = {slew, cap, slack};
+
     // Add token to the gateSizer for later classification
     gateSizer.addToken(tokenized_data, gate_type);
   }
@@ -101,16 +104,18 @@ void MLGateSizer::addToken(const std::vector<float>& pin_data, const std::string
         input_tokens(i, j) = pin_tokens_[i][j];
       }
     }
-    
+
     // Perform transformer model calculations
     feedforwardNetwork(input_tokens);
   }
 
   void MLGateSizer::feedforwardNetwork(Eigen::MatrixXf& input)
   {
-    // Implement feedforward network using Eigen operations and loaded transformer weights
+    // Implement feedforward network using Eigen operations and loaded
+  transformer weights
     // This could include positional encoding, multihead attention, and the like
-    Eigen::MatrixXf output = input * transformer_weights_; // Example of matrix multiplication
+    Eigen::MatrixXf output = input * transformer_weights_; // Example of matrix
+  multiplication
     // Apply activation functions, attention mechanisms, etc.
   }
 
@@ -120,24 +125,23 @@ void MLGateSizer::addToken(const std::vector<float>& pin_data, const std::string
     for (size_t i = 0; i < gate_types_.size(); ++i) {
       std::string gate_type = gate_types_[i];
       // Output the classification result (e.g., gate size)
-      std::cout << "Resizing gate of type: " << gate_type << " to predicted size" << std::endl;
+      std::cout << "Resizing gate of type: " << gate_type << " to predicted
+  size" << std::endl;
       // Resize the gate accordingly in the design
     }
   }
 
 */
 
-
 void MLGateSizer::getEndpointAndCriticalPaths()
 {
   // Print out statement to indicate the function is running
   std::cout << "Retrieving endpoints and critical paths..." << std::endl;
 
-
   // Retrieve endpoints and critical paths for debugging or further analysis
   init();
-  //sta::Network* network = sta_->network();
-  //sta::Graph* graph = sta_->graph();
+  // sta::Network* network = sta_->network();
+  // sta::Graph* graph = sta_->graph();
 
   // Retrieve endpoints
   sta::VertexSet* endpoints = sta_->endpoints();
@@ -162,14 +166,14 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     // Add the endpoint to the pinset
     pinset->insert(endpoint->pin());
 
-
     // Increment the count
     count++;
   }
 
-  std:: cout << "Debug Point 1" << std::endl;
-  sta::ExceptionTo* exception_to = new sta::ExceptionTo(pinset, nullptr, nullptr, nullptr, nullptr, true, network_);
-  std:: cout << "Debug Point 2" << std::endl;
+  std::cout << "Debug Point 1" << std::endl;
+  sta::ExceptionTo* exception_to = new sta::ExceptionTo(
+      pinset, nullptr, nullptr, nullptr, nullptr, true, network_);
+  std::cout << "Debug Point 2" << std::endl;
 
   // Check if exception_to is properly initialized
   if (exception_to == nullptr) {
@@ -187,38 +191,45 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
   // Retrieve the critical path for the endpoint
   sta::PathEndSeq path_ends = sta_->search()->findPathEnds(
-    nullptr, 
-    nullptr, 
-    nullptr, //exception_to, // test if exception_to is causing the issue
-    false, 
-    sta_->cmdCorner(),
-    sta::MinMaxAll::max(), // using min leads to no critical paths found
-    10, //group_count
-    10, //endpoint_count
-    true, //unique_pins
-    -sta::INF, 
-    sta::INF, // slack_min, slack_max
-    true, // sort_by_slack
-    nullptr,  // group_names
-    true, 
-    false, 
-    false, 
-    false, 
-    false, 
-    false);
+      nullptr,
+      nullptr,
+      nullptr,  // exception_to, // test if exception_to is causing the issue
+      false,
+      sta_->cmdCorner(),
+      sta::MinMaxAll::max(),  // using min leads to no critical paths found (max
+                              // seems to be setup time slack which is more
+                              // relevant for gatesizing min/holdtime slack have
+                              // to be fixed with buffer insertion)
+      10,                     // group_count
+      10,                     // endpoint_count
+      true,                   // unique_pins
+      -sta::INF,
+      sta::INF,  // slack_min, slack_max
+      true,      // sort_by_slack
+      nullptr,   // group_names
+      true,
+      false,
+      false,
+      false,
+      false,
+      false);
   std::cout << "Debug Point 3" << std::endl;
   // If no critical path is found, print a message
   if (path_ends.empty()) {
     std::cout << "No critical paths found " << std::endl;
   } else {
     // Print out the critical path
-    //for (const sta::PathEnd* path_end : path_ends) {
+    // for (const sta::PathEnd* path_end : path_ends) {
     //  path_end->reportPath(std::cout, network_, graph, 2);
     //}
     int path_count = 0;
     // Declare tempoary vector to store the slack of each path
     std::vector<float> path_slacks;
-    for (auto& path_end : path_ends) { // similar usage found in TritonPart.cpp BuildTimingPaths()
+    // Get all clk_nets to check if the pins are within sequential cells
+    std::set<dbNet*> clk_nets = sta_->findClkNets();
+
+    for (auto& path_end : path_ends) {  // similar usage found in TritonPart.cpp
+                                        // BuildTimingPaths()
       std::cout << "Critical Path " << path_count << std::endl;
       auto* path = path_end->path();
       float slack = path_end->slack(sta_);
@@ -226,29 +237,179 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       std::cout << "Slack: " << slack << std::endl;
       sta::PathExpanded expand(path, sta_);
       expand.path(expand.size() - 1);
+      float p2p_dist = 0.0;
+      float prev_x = 0.0;
+      float prev_y = 0.0;
+      bool is_port = false;        // check if pin is a port, port shouldn't be
+                                   // included in transsizer data
+      bool is_sequential = false;  // check if the cell is a sequential cell
       for (size_t i = 0; i < expand.size(); i++) {
         // PathRef is reference to a path vertex
         sta::PathRef* ref = expand.path(i);
         sta::Pin* pin = ref->vertex(sta_)->pin();
         // Pin name
-        std::cout << "Pin(" << path_count << "-" << i << "): " << network_->name(pin) << std::endl;
+        std::cout << "Pin(" << path_count << "-" << i
+                  << "): " << network_->name(pin) << std::endl;
         // Data to extract from pin:
-        //[x, y, p2p_dist, hpwl, wire_cap, arc_delay, fanout, reach_end, gate_type_id, mdelay, num_refs]
+        //[x, y, p2p_dist, hpwl, wire_cap, arc_delay, fanout, reach_end,
+        //gate_type_id, mdelay, num_refs]
         // X, Y coordinates of the pin
-        Point pin_loc = db_network_->location(pin); 
+        Point pin_loc = db_network_->location(pin);
         std::cout << "X: " << pin_loc.x() << std::endl;
         std::cout << "Y: " << pin_loc.y() << std::endl;
 
+        // Pin-to-pin distance (p2p_dist)
+        if (i > 0) {
+          p2p_dist = std::sqrt(std::pow(pin_loc.x() - prev_x, 2)
+                               + std::pow(pin_loc.y() - prev_y, 2));
+        } else {
+          p2p_dist = 0.0;
+        }
+        std::cout << "Pin-to-Pin Distance: " << p2p_dist << std::endl;
+
+        // HPWL, first retrieve the net connected to the pin, then retrieve the
+        // HPWL from the net
+        if (i > 0) {
+          // get max, min x and y coordinates from net and calculate HPWL
+          // 0.5 * multiplier seems incorrect, should be 1.0 (compare with
+          // TransSizer python code and fix if needed to unify)
+          std::cout << "HPWL: "
+                    << 0.5
+                           * (std::abs(pin_loc.x() - prev_x)
+                              + std::abs(pin_loc.y() - prev_y))
+                    << std::endl;
+        } else {
+          std::cout << "HPWL: 0" << std::endl;
+        }
+        // sta::Net* net = network_->net(pin);
+        //  check if pin is actually a pin or if it is a port or net
+        if (network_->isTopLevelPort(
+                pin))  // if pin is a port no need to check for net, also
+                       // shouldn't be included in transsizer data
+        {
+          std::cout << "Current Pin is a port" << std::endl;
+          is_port = true;
+        } else {
+          std::cout << "Current Pin is a pin" << std::endl;
+          std::cout << "Net-Name: " << network_->name(network_->net(pin))
+                    << std::endl;
+          is_port = false;
+        }
+
+        // Wire capacitance
+        // Arc delay
+        // Fanout
+        // Reach end (reachable endpoints from the pin)
+        int reachable_endpoints = 0;
+        sta::Net* pin_net = network_->net(pin);
+        if (pin_net) {
+          // Use connectedPinIterator to get all pins connected to this net
+          sta::NetConnectedPinIterator* pin_iter
+              = network_->connectedPinIterator(pin_net);
+          while (pin_iter->hasNext()) {
+            const Pin* connected_pin = pin_iter->next();
+            Vertex* connected_vertex = graph_->pinLoadVertex(connected_pin);
+            // Check if the connected pin is an endpoint
+            if (search_->isEndpoint(connected_vertex)) {
+              reachable_endpoints++;
+            }
+          }
+          delete pin_iter;
+        }
+        std::cout << "Reachable Endpoints: " << reachable_endpoints
+                  << std::endl;
+
+        // Cell type (gate type), retrieve the cell from the pin, then retrieve
+        // the cell type
+        // std::cout << "Pin's Cell Name: " <<
+        // network_->name(network_->instance(pin)) << std::endl; std::cout <<
+        // "Cell Type: " <<
+        // network_->libertyCell(network_->instance(pin))->name() << std::endl;
+
+        if (is_port == false) {
+          std::cout << "Pin's Cell Name: "
+                    << network_->name(network_->instance(pin)) << std::endl;
+          std::cout << "Cell Type: "
+                    << network_->libertyCell(network_->instance(pin))->name()
+                    << std::endl;
+        } else  // if current pin is a port, then the cell name or cell type is
+                // not applicable
+        {
+          std::cout << "Cell Type: Port" << std::endl;
+        }
+
+        // Check if the cell is a sequential cell (as only combinational cells
+        // are considered for gate sizing in TransSizer) Retrieve the clk_nets
+        // and check if the pin_net is in the clk_nets If it is, then the cell
+        // is a sequential cell If it is not, then the cell is a combinational
+        // cell
+        if (is_port == false) {
+          sta::Net* sta_net = network_->net(pin);
+          if (sta_net) {
+            dbNet* db_net = db_network_->staToDb(sta_net);
+            // Check if current pin's net is in clock nets
+            if (clk_nets.find(db_net) != clk_nets.end()) {
+              std::cout << "Is In Clock Nets: True" << std::endl;
+            } else {
+              std::cout << "Is In Clock Nets: False" << std::endl;
+            }
+          }
+        }
+
+        // Get the instance and cell containing the pin
+        Instance* inst = network_->instance(pin);
+        if (inst) {
+          LibertyCell* cell = network_->libertyCell(inst);
+          if (cell) {
+            // Method 1: Check if cell has any sequential elements
+            if (!cell->sequentials().empty()) {
+              is_sequential = true;
+            }
+          }
+        }
+        // Is the cell in clock?
+        bool is_in_clock = false;
+        dbInst* db_inst = db_network_->staToDb(network_->instance(pin));
+        if (db_inst) {
+          for (odb::dbITerm* iterm : db_inst->getITerms()) {
+            dbNet* net = iterm->getNet();
+            if (net != nullptr && net->getSigType() == odb::dbSigType::CLOCK) {
+              is_in_clock = true;
+              break;
+            } 
+          }
+        }
+
+        std::cout << "Is In Clock: " << is_in_clock << std::endl;
+
+        std::cout << "Is Sequential: " << is_sequential << std::endl;
+
         // Slack of the pin
-        std::cout << "Slack (max):" << sta_->pinSlack(pin, sta::MinMax::max()) << std::endl;
-        std::cout << "Slack (min):" << sta_->pinSlack(pin, sta::MinMax::min()) << std::endl;
-        
-        std::cout << "Rise Slack (max):" << sta_->pinSlack(pin, sta::RiseFall::rise(), sta::MinMax::max()) << std::endl;
-        std::cout << "Fall Slack (max):" << sta_->pinSlack(pin, sta::RiseFall::fall(), sta::MinMax::max()) << std::endl;
-        std::cout << "Rise Slack (min):" << sta_->pinSlack(pin, sta::RiseFall::rise(), sta::MinMax::min()) << std::endl;
-        std::cout << "Fall Slack (min):" << sta_->pinSlack(pin, sta::RiseFall::fall(), sta::MinMax::min()) << std::endl;
+        std::cout << "Slack (max):" << sta_->pinSlack(pin, sta::MinMax::max())
+                  << std::endl;
+        std::cout << "Slack (min):" << sta_->pinSlack(pin, sta::MinMax::min())
+                  << std::endl;
+
+        std::cout << "Rise Slack (max):"
+                  << sta_->pinSlack(
+                         pin, sta::RiseFall::rise(), sta::MinMax::max())
+                  << std::endl;
+        std::cout << "Fall Slack (max):"
+                  << sta_->pinSlack(
+                         pin, sta::RiseFall::fall(), sta::MinMax::max())
+                  << std::endl;
+        std::cout << "Rise Slack (min):"
+                  << sta_->pinSlack(
+                         pin, sta::RiseFall::rise(), sta::MinMax::min())
+                  << std::endl;
+        std::cout << "Fall Slack (min):"
+                  << sta_->pinSlack(
+                         pin, sta::RiseFall::fall(), sta::MinMax::min())
+                  << std::endl;
 
         std::cout << std::endl;
+        prev_x = pin_loc.x();
+        prev_y = pin_loc.y();
       }
       path_count++;
     }
@@ -258,8 +419,9 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     }
   }
 
-  // In addition or alternatively, 
-  // consider using vertexWorstSlackPath to find the critical path for each endpoint
+  // In addition or alternatively,
+  // consider using vertexWorstSlackPath to find the critical path for each
+  // endpoint
 
   // Next step is extracting the data from each pin
   // Then, transform the data into the format expected by the transformer model
@@ -267,25 +429,18 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
   // Use PinMetrics and PinDataSequence to store the extracted data
 
-
-
-
-
-
-
-
   // Tempoarily commented out to avoid compilation errors, try to fix later
-  /* 
+  /*
   if (endpoints.empty()) {
     std::cout << "No endpoints found." << std::endl;
     return;
   } else {
     std::cout << "Found " << endpoints.size() << " endpoints." << std::endl;
 
-    // Iterate through each endpoint and retrieve the critical path for each endpoint
-    for (const Pin* endpoint : endpoints) {
-      std::string endpoint_name = network_->name(endpoint);
-      std::cout << "Endpoint: " << endpoint_name << std::endl;
+    // Iterate through each endpoint and retrieve the critical path for each
+  endpoint for (const Pin* endpoint : endpoints) { std::string endpoint_name =
+  network_->name(endpoint); std::cout << "Endpoint: " << endpoint_name <<
+  std::endl;
 
       PathEndSeq path_ends = sta->findPathEnds(
         nullptr, nullptr, new ExceptionTo(endpoint), false, nullptr,
@@ -293,18 +448,14 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         true, false, false, false, false, false);
 
       if (path_ends.empty()) {
-        std::cout << "No critical path found for endpoint " << endpoint_name << std::endl;
-      } else {
-        for (const PathEnd* path_end : path_ends) {
+        std::cout << "No critical path found for endpoint " << endpoint_name <<
+  std::endl; } else { for (const PathEnd* path_end : path_ends) {
           path_end->reportPath(std::cout, network_, graph, 2);
         }
       }
     }
   }
   */
-
-  
 }
 
-} // namespace rsz
-
+}  // namespace rsz
