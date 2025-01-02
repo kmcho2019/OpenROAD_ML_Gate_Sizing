@@ -299,7 +299,11 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         }
 
         // Wire capacitance
+
         // Arc delay
+        // Calculates the arc delay between the current pin and the previous pin of path.
+        // Skips the first element of path as there is no previous pin (first element is usually a port)
+        // Method taken from repairPath() at RepairSetup.cc. 
         if (prev_pin != nullptr) {
           sta::TimingArc* prev_arc = expand.prevArc(i);
           sta::Edge* prev_edge = ref->prevEdge(prev_arc, sta_);
@@ -307,6 +311,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           std::cout << "Arc Delay: " << delay << std::endl;
         }
         // Fanout
+
         // Reach end (reachable endpoints from the pin)
         int reachable_endpoints = 0;
         sta::Net* pin_net = network_->net(pin);
@@ -392,6 +397,11 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
         std::cout << "Is Sequential: " << is_sequential << std::endl;
 
+        // maxcap
+        // maxtran
+        // tran
+
+
         // Slack of the pin
         std::cout << "Slack (max):" << sta_->pinSlack(pin, sta::MinMax::max())
                   << std::endl;
@@ -414,6 +424,32 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                   << sta_->pinSlack(
                          pin, sta::RiseFall::fall(), sta::MinMax::min())
                   << std::endl;
+
+        //rise arrival time
+        float rise_arrival_time = 0.0;
+        rise_arrival_time = sta_->pinArrival(pin, sta::RiseFall::rise(), sta::MinMax::max());//Timing::getPinArrival(pin, sta::RiseFall::rise(), sta::MinMax::max());
+        std::cout << "Rise Arrival Time: "
+                  << rise_arrival_time << std::endl;
+                  
+
+        //fall arrival time
+        float fall_arrival_time = 0.0;
+        fall_arrival_time = sta_->pinArrival(pin, sta::RiseFall::rise(), sta::MinMax::max());//Timing::getPinArrival(pin, sta::RiseFall::fall(), sta::MinMax::max());
+        std::cout << "Fall Arrival Time: "
+                  << fall_arrival_time << std::endl;
+
+        // input_pin_cap (if not an input pin, then -1)
+        // Taken from getPortCap() in Timing.cc
+        float input_pin_cap = -1.0;
+        // also check if the "pin" is a port or a real pin
+        if (is_port == false) {
+          if (network_->direction(pin) == sta::PortDirection::input()) {
+            sta::Corner* corner = sta_->cmdCorner();
+            sta::LibertyPort* lib_port = network_->libertyPort(pin);
+            input_pin_cap = sta_->capacitance(lib_port, corner, sta::MinMax::max());
+          }
+        }
+        std::cout << "Input Pin Cap: " << input_pin_cap << std::endl;
 
         std::cout << std::endl;
         prev_x = pin_loc.x();
