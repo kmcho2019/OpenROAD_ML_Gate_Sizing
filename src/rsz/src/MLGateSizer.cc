@@ -243,6 +243,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       bool is_port = false;        // check if pin is a port, port shouldn't be
                                    // included in transsizer data
       bool is_sequential = false;  // check if the cell is a sequential cell
+      sta::Pin* prev_pin = nullptr; // used to store previous pin for arc delay
+      const sta::DcalcAnalysisPt* dcalc_ap = path->dcalcAnalysisPt(sta_); // used to get arc delay
       for (size_t i = 0; i < expand.size(); i++) {
         // PathRef is reference to a path vertex
         sta::PathRef* ref = expand.path(i);
@@ -298,6 +300,12 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
         // Wire capacitance
         // Arc delay
+        if (prev_pin != nullptr) {
+          sta::TimingArc* prev_arc = expand.prevArc(i);
+          sta::Edge* prev_edge = ref->prevEdge(prev_arc, sta_);
+          sta::Delay delay = graph_->arcDelay(prev_edge, prev_arc, dcalc_ap->index());
+          std::cout << "Arc Delay: " << delay << std::endl;
+        }
         // Fanout
         // Reach end (reachable endpoints from the pin)
         int reachable_endpoints = 0;
@@ -410,6 +418,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         std::cout << std::endl;
         prev_x = pin_loc.x();
         prev_y = pin_loc.y();
+        prev_pin = pin;
       }
       path_count++;
     }
