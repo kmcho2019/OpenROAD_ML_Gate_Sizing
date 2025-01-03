@@ -399,8 +399,19 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
         // maxcap
         // maxtran
-        // tran
 
+        // tran (pin slew)
+        // find vertex corresponding to pin and get slew using vertexSlew
+        // CircuitOps used in TransSizer seems to check rise transition time only, check if this is true
+        float rise_slew = 0.0;
+        float fall_slew = 0.0;
+        Vertex* vertex = graph_->pinLoadVertex(pin);
+        if (vertex) {
+          rise_slew = sta_->vertexSlew(vertex, sta::RiseFall::rise(), sta::MinMax::max());
+          fall_slew = sta_->vertexSlew(vertex, sta::RiseFall::fall(), sta::MinMax::max());
+        }
+        std::cout << "Rise Slew: " << rise_slew << std::endl;
+        std::cout << "Fall Slew: " << fall_slew << std::endl;
 
         // Slack of the pin
         std::cout << "Slack (max):" << sta_->pinSlack(pin, sta::MinMax::max())
