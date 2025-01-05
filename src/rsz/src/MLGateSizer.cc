@@ -298,7 +298,20 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           is_port = false;
         }
 
-        // Wire capacitance
+        // Wire capacitance (net_cap)
+        // Retrieves the capacitance of the net connected to the pin
+        sta::Net* net = network_->net(pin);
+        float pin_cap = 0.0;
+        float wire_cap = 0.0;
+        if (net) {
+          sta::Corner* corner = sta_->cmdCorner();
+          sta::MinMax* min_max = sta::MinMax::max();
+          sta_->connectedCap(net, corner, min_max, pin_cap, wire_cap);
+          std::cout << "Wire Cap: " << wire_cap << std::endl;
+          std::cout << "Pin Cap: " << pin_cap << std::endl;
+          std::cout << "Total Connected Cap: " << wire_cap + pin_cap << std::endl;
+        }
+
 
         // Arc delay
         // Calculates the arc delay between the current pin and the previous pin of path.
