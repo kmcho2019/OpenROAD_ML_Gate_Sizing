@@ -310,6 +310,18 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           std::cout << "Wire Cap: " << wire_cap << std::endl;
           std::cout << "Pin Cap: " << pin_cap << std::endl;
           std::cout << "Total Connected Cap: " << wire_cap + pin_cap << std::endl;
+
+          // Fanout (calculates number of pins connected to the net of current pin)
+          // Referenced from connectedPins() in rsz/src/SteinerTree.cc
+          sta::NetConnectedPinIterator *connected_pins = network_->connectedPinIterator(net);
+          int fanout = 0;
+          while (connected_pins->hasNext()) {
+            connected_pins->next();
+            fanout++;
+          }
+          // Subtract 1 from fanout as the current pin is also included in the fanout
+          fanout = fanout - 1;
+          std::cout << "Fanout: " << fanout << std::endl;
         }
 
 
@@ -323,7 +335,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           sta::Delay delay = graph_->arcDelay(prev_edge, prev_arc, dcalc_ap->index());
           std::cout << "Arc Delay: " << delay << std::endl;
         }
-        // Fanout
+
+        
 
         // Reach end (reachable endpoints from the pin)
         int reachable_endpoints = 0;
@@ -410,8 +423,61 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
         std::cout << "Is Sequential: " << is_sequential << std::endl;
 
-        // maxcap
-        // maxtran
+        // check maxcap and maxslew only if the "pin" is an actual pin
+        if (is_port == false)
+        {
+          // maxcap
+          // referenced from getMaxCapLimit() in Timing.cc
+          // check if the "pin" is ground or power pin
+          // if it is, then max_cap is 0.0
+          // if it is not, then get max_cap from the liberty library
+          // if max_cap is not found, then get default max_cap from the liberty library
+          float max_cap = 0.0;
+          bool max_cap_exists = false;
+          bool is_supply_pin = false;
+          sta::LibertyPort* lib_port = network_->libertyPort(pin);
+          sta::LibertyLibrary* lib = network_->defaultLibertyLibrary();
+          // convert sta::Pin* to dbITerm to check if it is a supply pin
+          // Reference from TimingConeRenderer::isSupplyPin() in staGui.cpp
+          odb::dbITerm* iterm;
+          odb::dbBTerm* bterm;
+          odb::dbModITerm* moditerm;
+          odb::dbModBTerm* modbterm;
+          db_network_->staToDb(pin, iterm, bterm, moditerm, modbterm);
+          if (iterm != nullptr) {
+            if (iterm->getSigType().isSupply()) {
+              is_supply_pin = true;
+            }
+          } else if (bterm != nullptr) {
+            if (bterm->getSigType().isSupply()) {
+              is_supply_pin = true;
+            }
+          }
+          std::cout << "Is Supply Pin: " << is_supply_pin << std::endl;
+          if (!is_supply_pin) {
+            lib_port->capacitanceLimit(sta::MinMax::max(), max_cap, max_cap_exists);
+            if (!max_cap_exists) {
+              lib->defaultMaxCapacitance(max_cap, max_cap_exists);
+            }
+          }
+          // maxtran
+          // referenced from getMaxSlewLimit() in Timing.cc
+          // similar to maxcap, check if the "pin" is ground or power pin
+          // if it is, then max_slew is 0.0
+          // if it is not, then get max_slew from the liberty library
+          // if max_slew is not found, then get default max_slew from the liberty library
+          float max_slew = 0.0;
+          bool max_slew_exists = false;
+          if (!is_supply_pin) {
+            lib_port->slewLimit(sta::MinMax::max(), max_slew, max_slew_exists);
+            if (!max_slew_exists) {
+              lib->defaultMaxSlew(max_slew, max_slew_exists);
+            }
+          }
+          std::cout << "Max Cap: " << max_cap << std::endl;
+          std::cout << "Max Slew: " << max_slew << std::endl;
+
+        }
 
         // tran (pin slew)
         // find vertex corresponding to pin and get slew using vertexSlew
