@@ -381,6 +381,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         // and check if the pin_net is in the clk_nets If it is, then the cell
         // is a sequential cell If it is not, then the cell is a combinational
         // cell
+        // seems to be true for pins that end with /CLK, doesn't seem to check if the cell is a sequential cell
         bool is_in_clock_nets = false;
         if (is_port == false) {
           sta::Net* sta_net = network_->net(pin);
@@ -668,6 +669,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                     << "Fanout: " << fanout << "\n"
                     << "Arc Delay: " << arc_delay << "\n"
                     << "Reachable Endpoints: " << reachable_endpoints << "\n"
+                    << "Pin's Net Name: " << (net ? network_->name(network_->net(pin)) : "None") << "\n"
+                    << "Pin's Cell Name: " << (is_port ? "Port" : network_->name(network_->instance(pin))) << "\n"
                     << "Cell Type: " << (is_port ? "Port" : network_->libertyCell(inst)->name()) << "\n"
                     << "Is In Clock Nets: " << is_in_clock_nets << "\n"
                     << "Is In Clock: " << is_in_clock << "\n"
