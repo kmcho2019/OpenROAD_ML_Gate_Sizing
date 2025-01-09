@@ -1,6 +1,6 @@
 #include "MLGateSizer.hh"
 
-#include <iostream>
+
 
 #include "db_sta/dbNetwork.hh"
 #include "rsz/Resizer.hh"
@@ -541,12 +541,16 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       }
 
       std::cout << "Test Code" << std::endl;
+
+      PinSequenceCollector collector;
       p2p_dist = 0.0;
       prev_x = 0.0;
       prev_y = 0.0;
       is_port = false;
       prev_pin = nullptr;
       for (size_t i = 0; i < expand.size(); i++) {
+          // PinMetrics object initialization
+          PinMetrics pin_metrics;
           // Core object retrieval
           sta::PathRef* ref = expand.path(i);
           sta::Pin* pin = ref->vertex(sta_)->pin();
@@ -682,6 +686,38 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                     << sta_->pinSlack(pin, sta::MinMax::min()) << "\n"
                     << "Rise/Fall Arrival Time: " << rise_arrival_time << "/" << fall_arrival_time << "\n"
                     << "Input Pin Cap: " << input_pin_cap << "\n\n";
+          // Fill in the PinMetrics object
+          pin_metrics.pin_name = network_->name(pin);
+          pin_metrics.cell_name = is_port ? "Port" : network_->name(network_->instance(pin));
+          pin_metrics.cell_type = is_port ? "Port" : network_->libertyCell(inst)->name();
+          pin_metrics.x_loc = pin_loc.x();
+          pin_metrics.y_loc = pin_loc.y();
+          pin_metrics.p2p_dist = p2p_dist;
+          pin_metrics.hpwl = hpwl;
+          pin_metrics.input_pin_cap = input_pin_cap;
+          pin_metrics.wire_cap = wire_cap;
+          pin_metrics.pin_cap = pin_cap;
+          pin_metrics.total_cap = wire_cap + pin_cap;
+          pin_metrics.fanout = fanout;
+          pin_metrics.arc_delay = arc_delay;
+          pin_metrics.reachable_endpoints = reachable_endpoints;
+          pin_metrics.is_in_clock_nets = is_in_clock_nets;
+          pin_metrics.is_in_clock = is_in_clock;
+          pin_metrics.is_port = is_port;
+          pin_metrics.max_cap = max_cap;
+          pin_metrics.max_slew = max_slew;
+          pin_metrics.rise_slew = rise_slew;
+          pin_metrics.fall_slew = fall_slew;
+          pin_metrics.slack = sta_->pinSlack(pin, sta::MinMax::max());
+          pin_metrics.rise_arrival_time = rise_arrival_time;
+          pin_metrics.fall_arrival_time = fall_arrival_time;
+
+          // Process the pin
+          collector.processPin(pin_metrics);
+
+
+          
+
 
           // Update previous values for next iteration
           prev_x = pin_loc.x();
@@ -689,6 +725,25 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           prev_pin = pin;
       }
       path_count++;
+
+      // Finalize the collection
+      collector.finalize();
+      // Start processing the collected data
+      const auto& sequences = collector.getSequences();
+
+      // Need to convert the sequences into a format that can be used by the transformer model
+      const std::unordered_map<std::string, int> pin_name_to_id;
+      const std::unordered_map<std::string, int> cell_name_to_id;
+      const std::unordered_map<std::string, int> cell_type_to_id;
+      const std::unordered_map<int, std::vector<float>> cell_type_embeddings;
+
+      auto builder = SequenceArrayBuilder(collector.getSequences(),
+                                        pin_name_to_id,
+                                        cell_name_to_id,
+                                        cell_type_to_id,
+                                        cell_type_embeddings);
+
+      auto [data_array, pin_ids, cell_ids, cell_type_ids] = builder.build();
 
     }
 
@@ -698,6 +753,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     for (size_t i = 0; i < path_slacks.size(); i++) {
       std::cout << "Path " << i << " Slack: " << path_slacks[i] << std::endl;
     }
+
+
   }
 
   // In addition or alternatively,
