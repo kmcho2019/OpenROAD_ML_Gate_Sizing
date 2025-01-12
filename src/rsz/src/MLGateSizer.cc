@@ -1,5 +1,8 @@
 #include "MLGateSizer.hh"
-
+#include <cmath>  // for sqrt, pow
+#include <cassert>
+#include <iostream>
+#include <random>
 
 
 #include "db_sta/dbNetwork.hh"
@@ -58,8 +61,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
   // Retrieve endpoints and critical paths for debugging or further analysis
   init();
-  // sta::Network* network = sta_->network();
-  // sta::Graph* graph = sta_->graph();
+
 
   // Retrieve endpoints
   sta::VertexSet* endpoints = sta_->endpoints();
@@ -100,14 +102,12 @@ void MLGateSizer::getEndpointAndCriticalPaths()
   // consider using vertexWorstSlackPath to find the critical path for each
   // endpoint
   //std::cout << "Debug Point 3" << std::endl;
+
   // If no critical path is found, print a message
   if (path_ends.empty()) {
     std::cout << "No critical paths found " << std::endl;
   } else {
-    // Print out the critical path
-    // for (const sta::PathEnd* path_end : path_ends) {
-    //  path_end->reportPath(std::cout, network_, graph, 2);
-    //}
+
     int path_count = 0;
     // Declare tempoary vector to store the slack of each path
     std::vector<float> path_slacks;
@@ -210,11 +210,11 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
     for (auto& path_end : path_ends) {  // similar usage found in TritonPart.cpp
                                         // BuildTimingPaths()
-      std::cout << "Critical Path " << path_count << std::endl;
+      //std::cout << "Critical Path " << path_count << std::endl;
       auto* path = path_end->path();
       float slack = path_end->slack(sta_);
       path_slacks.push_back(slack);
-      std::cout << "Slack: " << slack << std::endl;
+      //std::cout << "Slack: " << slack << std::endl;
       sta::PathExpanded expand(path, sta_);
       expand.path(expand.size() - 1);
       float p2p_dist = 0.0;
@@ -381,14 +381,13 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           float input_pin_cap = (!is_port && network_->direction(pin) == sta::PortDirection::input()) ?
               sta_->capacitance(lib_port, corner, sta::MinMax::max()) : -1.0;
           float slack = sta_->pinSlack(pin, sta::MinMax::max());
-          float min_slack = sta_->pinSlack(pin, sta::MinMax::min());
+
 
           // Cell type (gate type), retrieve the cell from the pin, then retrieve the cell type
           std::string cell_type = is_port ? "Port" : network_->libertyCell(inst)->name();
           std::string cell_name = is_port ? "Port" : network_->name(inst);
 
-          // Network name of the pin
-          std::string net_name = net ? network_->name(net) : "None";
+
 
           // Pin Name
           std::string pin_name = network_->name(pin);
@@ -408,6 +407,9 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
           /*
           // Output all collected data (for debugging)
+          float min_slack = sta_->pinSlack(pin, sta::MinMax::min());
+          // Network name of the pin
+          std::string net_name = net ? network_->name(net) : "None";
           std::cout << "Pin(" << path_count << "-" << i << "): " << pin_name << "\n"
                     << "X: " << pin_loc.x() << "\n"
                     << "Y: " << pin_loc.y() << "\n"
@@ -492,7 +494,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
     //std::cout << "Debug Point 5" << std::endl;
 
-    const auto& sequences = collector.getSequences();
+    // const auto& sequences = collector.getSequences();
 
     // Need to convert the sequences into a format that can be used by the transformer model
 
@@ -549,12 +551,14 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
 
     
-
+    /*
     // Print out the slack of each path (for debugging), remove later
     for (size_t i = 0; i < path_slacks.size(); i++) {
       std::cout << "Path " << i << " Slack: " << path_slacks[i] << std::endl;
     }
-    
+    */
+
+    auto outputs = runTransformer(data_array);  // Run the transformer model
 
 
   }
@@ -567,6 +571,385 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
   // Use PinMetrics and PinDataSequence to store the extracted data
 
+}
+
+// ------------------------------------------------------------
+// Helper function: naive matrix multiply
+// A: [M x K], B: [K x N] => C: [M x N]
+// ------------------------------------------------------------
+static std::vector<std::vector<float>> matMul(
+    const std::vector<std::vector<float>>& A,
+    const std::vector<std::vector<float>>& B)
+{
+  const size_t M = A.size();
+  const size_t K = A[0].size();
+  const size_t K2 = B.size(); // should match K
+  const size_t N = B[0].size();
+
+  assert(K == K2 && "Inner dimensions must match for matMul");
+
+  std::vector<std::vector<float>> C(M, std::vector<float>(N, 0.0f));
+  for (size_t i = 0; i < M; i++) {
+    for (size_t j = 0; j < N; j++) {
+      float sum = 0.0f;
+      for (size_t k = 0; k < K; k++) {
+        sum += A[i][k] * B[k][j];
+      }
+      C[i][j] = sum;
+    }
+  }
+  return C;
+}
+
+// ------------------------------------------------------------
+// Helper function: naive LayerNorm across "D" dimension
+// For each token T, we have a vector of dimension D.
+// We'll do LN(token) = (token - mean)/sqrt(var + eps) * gamma + beta
+// This example uses no gamma/beta for simplicity, or sets them to 1/0.
+// ------------------------------------------------------------
+static void layerNorm(std::vector<std::vector<float>>& seq, float eps = 1e-5f)
+{
+  // seq is shape [L x D]
+  // For each row (token) in seq, compute mean & var, then normalize in place
+  const size_t L = seq.size();
+  if (L == 0) return;
+  const size_t D = seq[0].size();
+
+  for (size_t i = 0; i < L; i++) {
+    // 1) mean
+    float mean = 0.0f;
+    for (size_t d = 0; d < D; d++) {
+      mean += seq[i][d];
+    }
+    mean /= static_cast<float>(D);
+
+    // 2) variance
+    float var = 0.0f;
+    for (size_t d = 0; d < D; d++) {
+      float diff = seq[i][d] - mean;
+      var += diff * diff;
+    }
+    var /= static_cast<float>(D);
+
+    // 3) normalize in place
+    for (size_t d = 0; d < D; d++) {
+      seq[i][d] = (seq[i][d] - mean) / std::sqrt(var + eps);
+      // If you want to add gamma/beta:
+      // seq[i][d] = gamma[d] * seq[i][d] + beta[d];
+    }
+  }
+}
+
+// ------------------------------------------------------------
+// Helper function: naive multi-head self-attention for one sequence
+// We'll do a single pass of multi-head attention for a shape [L x D].
+//
+// Heads: H
+// We split D into H heads each of size Dh = D/H.
+// For simplicity, we do random Wq, Wk, Wv. Real code would load from TransSizer.
+// Model loading has not been implemented yet.
+// We do the standard formula: softmax(Q*K^T / sqrt(Dh)) * V
+// Then we re-concatenate the heads.
+//
+// This is extremely naive, with no parallelization, etc.
+// Try to use this as a reference for more optimized code.
+// ------------------------------------------------------------
+static std::vector<std::vector<float>> multiHeadSelfAttention(
+    const std::vector<std::vector<float>>& seq,
+    int num_heads)
+{
+  // seq shape: [L x D]
+  // Return shape: [L x D]
+  const size_t L = seq.size();
+  if (L == 0) {
+    return seq; // nothing to do
+  }
+  const size_t D = seq[0].size();
+  assert(D % num_heads == 0 && "D must be divisible by num_heads");
+  size_t Dh = D / num_heads;
+
+  // 1) Create random (or dummy) Wq, Wk, Wv of shape [D x D].
+  // For demonstration, let's fill them with small random values.
+  static std::mt19937 rng(42);
+  std::uniform_real_distribution<float> dist(-0.1f, 0.1f);
+
+  auto randomMatrix = [&](size_t rows, size_t cols) {
+    std::vector<std::vector<float>> mat(rows, std::vector<float>(cols, 0.0f));
+    for (size_t r = 0; r < rows; r++) {
+      for (size_t c = 0; c < cols; c++) {
+        mat[r][c] = dist(rng);
+      }
+    }
+    return mat;
+  };
+
+  std::vector<std::vector<float>> Wq = randomMatrix(D, D);
+  std::vector<std::vector<float>> Wk = randomMatrix(D, D);
+  std::vector<std::vector<float>> Wv = randomMatrix(D, D);
+
+  // 2) Flatten seq from [L x D] to a form we can do matMul with:
+  // For matMul, we treat it as [L x D].
+  // Q = seq * Wq => shape [L x D]
+  // K = seq * Wk => shape [L x D]
+  // V = seq * Wv => shape [L x D]
+
+  // We'll define a small helper to do matMul (LxD) * (DxD) => (LxD)
+  auto Q = matMul(seq, Wq);
+  auto K = matMul(seq, Wk);
+  auto V = matMul(seq, Wv);
+
+  // 3) Reshape Q,K,V into [L x H x Dh], do attention per head
+  // We'll store them in 3D structures: shape: Q_3d[H][L][Dh]
+  auto to3D = [&](const std::vector<std::vector<float>>& X) {
+    // X is [L x D]; we want [H x L x Dh]
+    std::vector<std::vector<std::vector<float>>> X3(
+        num_heads, std::vector<std::vector<float>>(L, std::vector<float>(Dh, 0.0f)));
+    for (size_t l = 0; l < L; l++) {
+      for (size_t h = 0; h < (size_t)num_heads; h++) {
+        for (size_t d = 0; d < Dh; d++) {
+          X3[h][l][d] = X[l][h * Dh + d];
+        }
+      }
+    }
+    return X3;
+  };
+
+  auto Q3 = to3D(Q);
+  auto K3 = to3D(K);
+  auto V3 = to3D(V);
+
+  // 4) Self-attention per head
+  // outHead[h] shape [L x Dh]
+  auto softmax = [&](std::vector<float>& logits) {
+    float max_val = logits[0];
+    for (auto v : logits) max_val = std::max(max_val, v);
+    float sum = 0.0f;
+    for (auto& v : logits) {
+      v = std::exp(v - max_val);
+      sum += v;
+    }
+    for (auto& v : logits) {
+      v /= sum;
+    }
+  };
+
+  std::vector<std::vector<std::vector<float>>> outHeads(
+      num_heads, std::vector<std::vector<float>>(L, std::vector<float>(Dh, 0.0f)));
+
+  for (size_t h = 0; h < (size_t)num_heads; h++) {
+    // For each head, we do attention
+    // For each query position lq in [0..L-1]:
+    for (size_t lq = 0; lq < L; lq++) {
+      // 1) Q3[h][lq]: shape [Dh]
+      // compute attention logits vs all K positions => shape [L]
+      std::vector<float> attn_logits(L, 0.0f);
+      for (size_t lk = 0; lk < L; lk++) {
+        // dot(Q3[h][lq], K3[h][lk]) / sqrt(Dh)
+        float dot_val = 0.0f;
+        for (size_t d = 0; d < Dh; d++) {
+          dot_val += Q3[h][lq][d] * K3[h][lk][d];
+        }
+        attn_logits[lk] = dot_val / std::sqrt((float)Dh);
+      }
+      // 2) softmax over attn_logits
+      softmax(attn_logits);
+
+      // 3) Weighted sum of V3[h][lk]
+      // outHeads[h][lq] = sum over lk( attn_logits[lk]*V3[h][lk] )
+      for (size_t lk = 0; lk < L; lk++) {
+        for (size_t d = 0; d < Dh; d++) {
+          outHeads[h][lq][d] += attn_logits[lk] * V3[h][lk][d];
+        }
+      }
+    }
+  }
+
+  // 5) Concatenate heads back => shape [L x D]
+  std::vector<std::vector<float>> outSeq(L, std::vector<float>(D, 0.0f));
+  for (size_t l_ = 0; l_ < L; l_++) {
+    for (size_t h_ = 0; h_ < (size_t)num_heads; h_++) {
+      for (size_t d_ = 0; d_ < Dh; d_++) {
+        outSeq[l_][h_ * Dh + d_] = outHeads[h_][l_][d_];
+      }
+    }
+  }
+  return outSeq;
+}
+
+// ------------------------------------------------------------
+// Helper function: naive feed-forward network
+// We'll do something like: FF(x) = ReLU(x*W1 + b1)*W2 + b2
+// For demonstration, we just define random W1, b1, W2, b2
+// ------------------------------------------------------------
+static std::vector<std::vector<float>> feedForward(
+    const std::vector<std::vector<float>>& seq)
+{
+  // seq shape: [L x D]
+  // Let hidden dim = 2D for example
+  if (seq.empty()) return seq;
+
+  const size_t L = seq.size();
+  const size_t D = seq[0].size();
+  const size_t H = 2 * D; // arbitrary
+
+  static std::mt19937 rng(123);
+  std::uniform_real_distribution<float> dist(-0.1f, 0.1f);
+
+  // We define W1: [D x H], b1: [H], W2: [H x D], b2: [D]
+  auto randomMatrix = [&](size_t rows, size_t cols) {
+    std::vector<std::vector<float>> mat(rows, std::vector<float>(cols, 0.0f));
+    for (size_t r = 0; r < rows; r++) {
+      for (size_t c = 0; c < cols; c++) {
+        mat[r][c] = dist(rng);
+      }
+    }
+    return mat;
+  };
+
+  auto randomVector = [&](size_t size) {
+    std::vector<float> vec(size, 0.0f);
+    for (size_t i = 0; i < size; i++) {
+      vec[i] = dist(rng);
+    }
+    return vec;
+  };
+
+  std::vector<std::vector<float>> W1 = randomMatrix(D, H);
+  std::vector<std::vector<float>> W2 = randomMatrix(H, D);
+  std::vector<float> b1 = randomVector(H);
+  std::vector<float> b2 = randomVector(D);
+
+  // 1) Compute seq * W1 => shape [L x H]
+  auto tmp = matMul(seq, W1);
+  // add b1 and ReLU
+  for (size_t l = 0; l < L; l++) {
+    for (size_t h = 0; h < H; h++) {
+      tmp[l][h] += b1[h];
+      if (tmp[l][h] < 0.0f) {
+        tmp[l][h] = 0.0f; // ReLU
+      }
+    }
+  }
+  // 2) Multiply by W2 => [L x D]
+  auto out = matMul(tmp, W2);
+  // add b2
+  for (size_t l = 0; l < L; l++) {
+    for (size_t d = 0; d < D; d++) {
+      out[l][d] += b2[d];
+    }
+  }
+  return out;
+}
+
+
+// --------------------------------------------------------------------
+// runTransformer: Projects data_array from D_in -> D_model (divisible by H),
+// runs M encoder layers, then projects back to D_in if desired.
+//
+// data_array: shape [N x L x D_in]
+// returns shape [N x L x D_in] if we do the final projection back
+//
+// Main "encoder" demonstration (one or more layers).
+// We'll do 2 encoder layers as a initial test example:
+//   For each layer:
+//     Y = LN( X + MultiHeadAttn(X) )
+//     Z = LN( Y + FF(Y) )
+// Return Z
+// 
+// For Gate sizing need to take encoder output and pass it through a classification head.
+// Each class corresponding to the libcell.
+// --------------------------------------------------------------------
+std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
+    const std::vector<std::vector<std::vector<float>>>& data_array)
+{
+  size_t N = data_array.size();
+  if (N == 0) return {};
+
+  size_t L = data_array[0].size();
+  if (L == 0) return {};
+
+  // Original input dimension
+  size_t D_in = data_array[0][0].size();
+
+  // Decide how many heads we want
+  const int num_heads = 4;
+
+  // Decide a model dimension that is divisible by num_heads
+  size_t D_model = 64;
+
+  // Number of encoder layers
+  const int num_encoder_layers = 2;
+
+  // We will random-initialize projection weights:
+  static std::mt19937 rng(999);
+  std::uniform_real_distribution<float> dist(-0.05f, 0.05f);
+
+  // W_in: [D_in x D_model]
+  auto randomMatrix = [&](size_t rows, size_t cols) {
+    std::vector<std::vector<float>> mat(rows, std::vector<float>(cols, 0.f));
+    for (size_t r = 0; r < rows; r++) {
+      for (size_t c = 0; c < cols; c++) {
+        mat[r][c] = dist(rng);
+      }
+    }
+    return mat;
+  };
+
+  // If you want to map back to D_in:
+  // W_out: [D_model x D_in]
+  auto W_in  = randomMatrix(D_in, D_model);
+  auto W_out = randomMatrix(D_model, D_in);
+
+  // Allocate output
+  std::vector<std::vector<std::vector<float>>> output(N,
+      std::vector<std::vector<float>>(L, std::vector<float>(D_in, 0.f)));
+
+  // For each sequence in the batch:
+  for (size_t n = 0; n < N; n++) {
+    // current seq: [L x D_in]
+    std::vector<std::vector<float>> seq = data_array[n];
+
+    // 1) Project seq => [L x D_model]
+    auto seq_proj = matMul(seq, W_in);
+
+    // 2) Run through encoder blocks
+    std::vector<std::vector<float>> x = seq_proj; // shape [L x D_model]
+    for (int layer = 0; layer < num_encoder_layers; layer++) {
+      // (a) Multi-head self-attention
+      auto attn_out = multiHeadSelfAttention(x, num_heads);
+      // (b) Residual
+      for (size_t l_ = 0; l_ < L; l_++) {
+        for (size_t d_ = 0; d_ < D_model; d_++) {
+          attn_out[l_][d_] += x[l_][d_];
+        }
+      }
+      // (c) LayerNorm
+      layerNorm(attn_out);
+
+      // (d) FeedForward
+      auto ff_out = feedForward(attn_out);
+      // (e) Residual
+      for (size_t l_ = 0; l_ < L; l_++) {
+        for (size_t d_ = 0; d_ < D_model; d_++) {
+          ff_out[l_][d_] += attn_out[l_][d_];
+        }
+      }
+      // (f) LayerNorm
+      layerNorm(ff_out);
+
+      // next layer input
+      x = ff_out;
+    }
+
+    // x is now [L x D_model]. Project back to [L x D_in]
+    auto final_out = matMul(x, W_out);
+
+    // Store final_out in output[n]
+    output[n] = final_out; // shape [L x D_in]
+  }
+
+  // Return shape: [N x L x D_in]
+  return output;
 }
 
 }  // namespace rsz
