@@ -10,6 +10,8 @@
 
 #include <vector>
 #include <string>
+#include <unordered_map>
+#include <tuple>
 #include <iostream>
 
 namespace sta {
@@ -272,6 +274,10 @@ class MLGateSizer : public sta::dbStaState
           };
       }
   };
+
+  // Naive encoder-like transformer forward pass (initial implementation)
+  std::vector<std::vector<std::vector<float>>> runTransformer(
+      const std::vector<std::vector<std::vector<float>>>& data_array);
 
   void loadWeights(const std::string& weight_file);
   void addToken(const std::vector<float>& pin_data, const std::string& gate_type);
