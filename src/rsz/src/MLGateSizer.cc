@@ -225,8 +225,9 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     int path_count = 0;
     // Declare tempoary vector to store the slack of each path
     std::vector<float> path_slacks;
-    // Get all clk_nets to check if the pins are within sequential cells
+    // Get all clk_nets to check if the pins are connected to a clock net
     std::set<dbNet*> clk_nets = sta_->findClkNets();
+    
 
     for (auto& path_end : path_ends) {  // similar usage found in TritonPart.cpp
                                         // BuildTimingPaths()
@@ -400,6 +401,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
 
         // Is the cell in clock?
+        // Checks if pin's instance is connected to a clock net
+        // Either a sequential cell or a buffer/inverter cell connected to a clock net
         bool is_in_clock = false;
         dbInst* db_inst = db_network_->staToDb(network_->instance(pin));
         if (db_inst) {
@@ -579,7 +582,9 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           bool is_supply_pin = (iterm && iterm->getSigType().isSupply()) || 
                               (bterm && bterm->getSigType().isSupply());
           bool is_in_clock_nets = false; // check if pin is in clock nets indicates /CLK pin
-          bool is_in_clock = false; // check if pin is in clock indicates sequential cell
+          bool is_in_clock = false; // check if pin's instance is connected to a clock net, either a sequential cell or a buffer/inverter cell connected to a clock net
+          bool is_sequential = false; // check if the cell is a sequential cell
+          bool is_macro = false; // check if cell is a macro/block cell
           if (is_port) {
               is_in_clock = false;
           } else {
@@ -594,6 +599,11 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                       break;
                   }
               }
+          }
+          if (lib_port) { // check if the cell is a sequential cell, referenced from Resizer::isRegister()
+            sta::LibertyCell* lib_cell = lib_port->libertyCell();
+            is_sequential = lib_cell && lib_cell->hasSequentials();
+            is_macro = lib_cell && lib_cell->isMacro();
           }
 
           // Location calculations
@@ -722,6 +732,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                     << "Cell Type: " << cell_type << "\n"
                     << "Is In Clock Nets: " << is_in_clock_nets << "\n"
                     << "Is In Clock: " << is_in_clock << "\n"
+                    << "Is Sequential: " << is_sequential << "\n"
+                    << "Is Macro: " << is_macro << "\n"
                     << "Is Supply Pin: " << is_supply_pin << "\n"
                     << "Max Cap: " << max_cap << "\n"
                     << "Max Slew: " << max_slew << "\n"
@@ -748,6 +760,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           pin_metrics.is_in_clock_nets = is_in_clock_nets;
           pin_metrics.is_in_clock = is_in_clock;
           pin_metrics.is_port = is_port;
+          pin_metrics.is_sequential = is_sequential;
+          pin_metrics.is_macro = is_macro;
           pin_metrics.max_cap = max_cap;
           pin_metrics.max_slew = max_slew;
           pin_metrics.rise_slew = rise_slew;
