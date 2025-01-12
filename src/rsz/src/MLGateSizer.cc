@@ -546,8 +546,12 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       p2p_dist = 0.0;
       prev_x = 0.0;
       prev_y = 0.0;
-      is_port = false;
-      prev_pin = nullptr;
+      is_port = false; // port shouldn't be included in transsizer data
+      prev_pin = nullptr; // used to calculate metrics like arc delay or p2p_dist
+      // Data to extract from pin:
+      // [x, y, p2p_dist, hpwl, wire_cap, arc_delay, fanout, reach_end, 
+      // gate_type_id, mdelay, num_refs, maxcap, maxtran, tran, slack, 
+      // risearr, fallarr, cap]
       for (size_t i = 0; i < expand.size(); i++) {
           // PinMetrics object initialization
           PinMetrics pin_metrics;
@@ -574,8 +578,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           bool is_port = network_->isTopLevelPort(pin);
           bool is_supply_pin = (iterm && iterm->getSigType().isSupply()) || 
                               (bterm && bterm->getSigType().isSupply());
-          bool is_in_clock_nets = false;
-          bool is_in_clock = false;
+          bool is_in_clock_nets = false; // check if pin is in clock nets indicates /CLK pin
+          bool is_in_clock = false; // check if pin is in clock indicates sequential cell
           if (is_port) {
               is_in_clock = false;
           } else {
@@ -593,20 +597,30 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           }
 
           // Location calculations
+          // Skips the first element of path as there is no previous pin (first element is usually a port)
           Point pin_loc = db_network_->location(pin);
+          // Pin-to-pin distance (p2p_dist)
           float p2p_dist = (i > 0) ? 
               std::sqrt(std::pow(pin_loc.x() - prev_x, 2) + std::pow(pin_loc.y() - prev_y, 2)) : 0.0;
+          // HPWL calculation (hpwl)
+          // -0.5 * multiplier is used in original TransSizer code, but it seems incorrect
+          // -Unify implementation with Python code if needed
           float hpwl = (i > 0) ? 
               0.5 * (std::abs(pin_loc.x() - prev_x) + std::abs(pin_loc.y() - prev_y)) : 0.0;
 
           // Capacitance calculations
+          // Wire capacitance (net_cap)
+          // -Retrieves the capacitance of the net connected to the pin
+          // -Total connected capacitance (total_cap = pin_cap + wire_cap)
+          // -Corresponds to total_cap and net_cap found in CircuitOps's net_properties.csv
           float pin_cap = 0.0;
           float wire_cap = 0.0;
           if (net) {
               sta_->connectedCap(net, corner, sta::MinMax::max(), pin_cap, wire_cap);
           }
 
-          // Fanout calculation
+          // Fanout calculation (fanout) (calculates number of pins connected to the net of current pin)
+          // -Referenced from connectedPins() in rsz/src/SteinerTree.cc
           int fanout = 0;
           if (net) {
               sta::NetConnectedPinIterator* connected_pins = network_->connectedPinIterator(net);
@@ -615,10 +629,13 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                   fanout++;
               }
               delete connected_pins;
-              fanout--; // Subtract current pin
+              fanout--; // Subtract current pin as it is also included in the fanout
           }
 
-          // Arc delay calculation
+          // Arc delay calculation (arc_delay)
+          // -Calculates the arc delay between the current pin and the previous pin of path.
+          // -Skips the first element of path as there is no previous pin (first element is usually a port)
+          // -Referenced from repairPath() at RepairSetup.cc.
           sta::Delay arc_delay = 0.0;
           if (prev_pin != nullptr) {
               sta::TimingArc* prev_arc = expand.prevArc(i);
@@ -626,7 +643,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
               arc_delay = graph_->arcDelay(prev_edge, prev_arc, dcalc_ap->index());
           }
 
-          // Reachable endpoints
+          // Reachable endpoints (reach_end)
+          // Calculates the number of reachable endpoints from the current pin
           int reachable_endpoints = 0;
           if (net) {
               sta::NetConnectedPinIterator* pin_iter = network_->connectedPinIterator(net);
@@ -640,6 +658,11 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           }
 
           // Timing constraints
+          // Max cap and max slew calculations (maxcap, maxtran)
+          // -Referenced from getMaxCapLimit() and getMaxSlewLimit() in Timing.cc
+          // -Check if the pin is a ground or power pin, if it is, then max_cap is 0.0
+          // -If it is not, then get max_cap/max_slew from the liberty library
+          // -If max_cap/max_slew is not found, then get default max_cap/max_slew from the liberty library
           float max_cap = 0.0, max_slew = 0.0;
           bool max_cap_exists = false, max_slew_exists = false;
           if (!is_supply_pin && !is_port) {
@@ -654,14 +677,35 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           }
 
           // Timing measurements
+          // Rise and fall slew calculations of pin (tran)
+          // -CircuitOps used in TransSizer seems to check rise transition time only, check if this is true
+          // -CircuitOps seems to use getPinSlew() which is also based on slewAllCorners() in Timing.cc
+          // -slewAllCorners() uses sta->vertexSlew(vertex, sta::RiseFall::rise(), corner, minmax))
+          // -This seems to show that rise slew is used in CircuitOps's (tran) calculation
+          // Rise and fall arrival time calculations of pin (risearr, fallarr)
+          // Input pin capacitance from CircuitOp's pin_properties.csv (cap) 
+          // -If pin is an input pin, then input pin capacitance is calculated
+          // -If pin is not an input pin, then input pin capacitance is -1.0
+          // Slack of the pin (slack)
+          // -Use MinMax::max() to get max slack as used in CircuitOps
+          // -Circuits Ops used the min of rise and fall slack, but sta_->pinSlack(pin, sta::MinMax::max()) does seem to do this automatically
           float rise_slew = vertex ? sta_->vertexSlew(vertex, sta::RiseFall::rise(), sta::MinMax::max()) : 0.0;
           float fall_slew = vertex ? sta_->vertexSlew(vertex, sta::RiseFall::fall(), sta::MinMax::max()) : 0.0;
           float rise_arrival_time = sta_->pinArrival(pin, sta::RiseFall::rise(), sta::MinMax::max());
           float fall_arrival_time = sta_->pinArrival(pin, sta::RiseFall::fall(), sta::MinMax::max());
           float input_pin_cap = (!is_port && network_->direction(pin) == sta::PortDirection::input()) ?
               sta_->capacitance(lib_port, corner, sta::MinMax::max()) : -1.0;
+          float slack = sta_->pinSlack(pin, sta::MinMax::max());
+          float min_slack = sta_->pinSlack(pin, sta::MinMax::min());
 
-          // Output all collected data
+          // Cell type (gate type), retrieve the cell from the pin, then retrieve the cell type
+          std::string cell_type = is_port ? "Port" : network_->libertyCell(inst)->name();
+          std::string cell_name = is_port ? "Port" : network_->name(inst);
+
+          // Network name of the pin
+          std::string net_name = net ? network_->name(net) : "None";
+
+          // Output all collected data (for debugging)
           std::cout << "Pin(" << path_count << "-" << i << "): " << network_->name(pin) << "\n"
                     << "X: " << pin_loc.x() << "\n"
                     << "Y: " << pin_loc.y() << "\n"
@@ -673,23 +717,23 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                     << "Fanout: " << fanout << "\n"
                     << "Arc Delay: " << arc_delay << "\n"
                     << "Reachable Endpoints: " << reachable_endpoints << "\n"
-                    << "Pin's Net Name: " << (net ? network_->name(network_->net(pin)) : "None") << "\n"
-                    << "Pin's Cell Name: " << (is_port ? "Port" : network_->name(network_->instance(pin))) << "\n"
-                    << "Cell Type: " << (is_port ? "Port" : network_->libertyCell(inst)->name()) << "\n"
+                    << "Pin's Net Name: " << net_name << "\n"
+                    << "Pin's Cell Name: " << cell_name << "\n"
+                    << "Cell Type: " << cell_type << "\n"
                     << "Is In Clock Nets: " << is_in_clock_nets << "\n"
                     << "Is In Clock: " << is_in_clock << "\n"
                     << "Is Supply Pin: " << is_supply_pin << "\n"
                     << "Max Cap: " << max_cap << "\n"
                     << "Max Slew: " << max_slew << "\n"
                     << "Rise/Fall Slew: " << rise_slew << "/" << fall_slew << "\n"
-                    << "Slack (max/min): " << sta_->pinSlack(pin, sta::MinMax::max()) << "/"
-                    << sta_->pinSlack(pin, sta::MinMax::min()) << "\n"
+                    << "Slack (max/min): " << slack << "/"
+                    << min_slack << "\n"
                     << "Rise/Fall Arrival Time: " << rise_arrival_time << "/" << fall_arrival_time << "\n"
                     << "Input Pin Cap: " << input_pin_cap << "\n\n";
           // Fill in the PinMetrics object
           pin_metrics.pin_name = network_->name(pin);
-          pin_metrics.cell_name = is_port ? "Port" : network_->name(network_->instance(pin));
-          pin_metrics.cell_type = is_port ? "Port" : network_->libertyCell(inst)->name();
+          pin_metrics.cell_name = cell_name;
+          pin_metrics.cell_type = cell_type;
           pin_metrics.x_loc = pin_loc.x();
           pin_metrics.y_loc = pin_loc.y();
           pin_metrics.p2p_dist = p2p_dist;
@@ -708,7 +752,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           pin_metrics.max_slew = max_slew;
           pin_metrics.rise_slew = rise_slew;
           pin_metrics.fall_slew = fall_slew;
-          pin_metrics.slack = sta_->pinSlack(pin, sta::MinMax::max());
+          pin_metrics.slack = slack;
           pin_metrics.rise_arrival_time = rise_arrival_time;
           pin_metrics.fall_arrival_time = fall_arrival_time;
 
@@ -726,24 +770,40 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       }
       path_count++;
 
+      std::cout << "Debug Point 4" << std::endl;
+
       // Finalize the collection
       collector.finalize();
       // Start processing the collected data
+
+      std::cout << "Debug Point 5" << std::endl;
+
       const auto& sequences = collector.getSequences();
 
       // Need to convert the sequences into a format that can be used by the transformer model
+
+      std::cout << "Debug Point 6" << std::endl;
+
+      // Placeholder for string to id maps and id to embedding maps
       const std::unordered_map<std::string, int> pin_name_to_id;
       const std::unordered_map<std::string, int> cell_name_to_id;
       const std::unordered_map<std::string, int> cell_type_to_id;
       const std::unordered_map<int, std::vector<float>> cell_type_embeddings;
 
+
+      std::cout << "Debug Point 7" << std::endl;
+
+      
+      /*
       auto builder = SequenceArrayBuilder(collector.getSequences(),
                                         pin_name_to_id,
                                         cell_name_to_id,
                                         cell_type_to_id,
                                         cell_type_embeddings);
 
-      auto [data_array, pin_ids, cell_ids, cell_type_ids] = builder.build();
+      auto [data_array, pin_ids, cell_ids, cell_type_ids] = builder.build();      
+      */
+
 
     }
 
