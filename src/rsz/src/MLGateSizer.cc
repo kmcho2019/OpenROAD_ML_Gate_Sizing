@@ -146,48 +146,13 @@ void MLGateSizer::getEndpointAndCriticalPaths()
   // Retrieve endpoints
   sta::VertexSet* endpoints = sta_->endpoints();
 
-  sta::PinSet* pinset = new sta::PinSet(network_);
-
   // Print out the number of endpoints found
   std::cout << "Found " << endpoints->size() << " endpoints." << std::endl;
 
-  // Iterate through first 10 endpoints terminate early if there aren't enough
-  int count = 0;
-  for (const Vertex* endpoint : *endpoints) {
-    if (count >= 10) {
-      break;
-    }
-
-    // Retrieve the name of the endpoint
-    std::string endpoint_name = network_->name(endpoint->pin());
-    std::cout << "Endpoint (Vertex): " << endpoint->name(network_) << std::endl;
-    std::cout << "Endpoint (Pin): " << endpoint_name << std::endl;
-
-    // Add the endpoint to the pinset
-    pinset->insert(endpoint->pin());
-
-    // Increment the count
-    count++;
-  }
 
   std::cout << "Debug Point 1" << std::endl;
-  sta::ExceptionTo* exception_to = new sta::ExceptionTo(
-      pinset, nullptr, nullptr, nullptr, nullptr, true, network_);
-  std::cout << "Debug Point 2" << std::endl;
 
-  // Check if exception_to is properly initialized
-  if (exception_to == nullptr) {
-    std::cout << "ExceptionTo is null" << std::endl;
-  } else {
-    std::cout << "ExceptionTo is not null" << std::endl;
-  }
-  // Check if pinset is properly initialized
-  if (pinset == nullptr) {
-    std::cout << "Pinset is null" << std::endl;
-  } else {
-    std::cout << "Pinset is not null" << std::endl;
-    std::cout << "Pinset size: " << pinset->size() << std::endl;
-  }
+  std::cout << "Debug Point 2" << std::endl;
 
   // Retrieve the critical path for the endpoint
   sta::PathEndSeq path_ends = sta_->search()->findPathEnds(
@@ -500,7 +465,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     std::cout << "Debug Point 5" << std::endl;
 
     const auto& sequences = collector.getSequences();
-    
+
     // Need to convert the sequences into a format that can be used by the transformer model
 
     std::cout << "Debug Point 6" << std::endl;
