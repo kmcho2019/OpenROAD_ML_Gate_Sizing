@@ -195,6 +195,91 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     // Used during data retrieval but stays uniform for all paths
     sta::LibertyLibrary* lib = network_->defaultLibertyLibrary();
     sta::Corner* corner = sta_->cmdCorner();
+
+    // Get Library Cell to index mapping
+    std::unordered_map<std::string, int> libcell_to_id;
+    std::unordered_map<std::string, int> libcell_to_type_id; // equivalent libcells share the same, Uses EquivCells
+    std::unordered_map<int, std::vector<float>> libcell_to_type_embedding;
+
+    int libcell_id = 0;
+    int libcell_type_id = 0;
+    odb::dbDatabase* db = sta_->db();
+    for (odb::dbLib* lib : db->getLibs()) {
+      for (odb::dbMaster* master : lib->getMasters()) {
+        std::string cell_name = master->getName();
+        if (libcell_to_id.find(cell_name) == libcell_to_id.end()) {
+          libcell_to_id[cell_name] = libcell_id++;
+        }
+      }
+    }
+    
+    // Initialize libcell_to_type_id 
+    // EquivCell part taken from Timing::EquivCells()
+    for (odb::dbLib* lib : db->getLibs()) {
+      for (odb::dbMaster* master : lib->getMasters()) {
+        sta::Cell* sta_cell = db_network_->dbToSta(master);
+        std::string cell_name = master->getName();
+        std::vector<odb::dbMaster*> masterSeq;
+        if (sta_cell) {
+          sta::LibertyCell* lib_cell = network_->libertyCell(sta_cell);
+          sta::LibertyCellSeq* equiv_cells = sta_->equivCells(lib_cell);
+          if (equiv_cells) {
+            for (sta::LibertyCell* equiv_cell : *equiv_cells) {
+              odb::dbMaster* equiv_master = db_network_->staToDb(equiv_cell);
+              masterSeq.emplace_back(equiv_master);
+            } 
+          } else {
+            masterSeq.emplace_back(master);
+          }
+        }
+
+        // Check if any of the equivalent cells already have a type ID
+        bool type_id_found = false;
+        for (odb::dbMaster* equiv_master : masterSeq) {
+          std::string equiv_cell_name = equiv_master->getName();
+          if (libcell_to_type_id.find(equiv_cell_name) != libcell_to_type_id.end()) {
+            // Found an equivalent cell with an existing type ID, use it
+            libcell_to_type_id[cell_name] = libcell_to_type_id[equiv_cell_name];
+            type_id_found = true;
+            break; // No need to check further
+          }
+        }
+
+        // If none of the equivalent cells have a type ID, assign a new one
+        if (!type_id_found) {
+          libcell_to_type_id[cell_name] = libcell_type_id++;
+          // Optionally generate and assign embeddings here, e.g.,
+          // cell_type_embeddings[libcell_to_type_id[cell_name]] = generateEmbedding(master);
+        }
+
+      }
+    }
+
+    // Initialize libcell_to_type_embedding with placeholder values
+    // Proper embedding comes from passing through libcell name through a sentence transformer and averaging the values for same libcell type
+    for (const auto& type_pair : libcell_to_type_id) {
+      int type_id = type_pair.second;
+
+      // Create a 16-float embedding filled with 0.0, 1.0, 2.0, ...
+      std::vector<float> embedding(16);
+      for (int i = 0; i < embedding.size(); ++i) {
+        embedding[i] = static_cast<float>(type_id); // Assign the type_id as the value for all elements in the embedding
+      }
+
+      libcell_to_type_embedding[type_id] = embedding;
+    }
+
+
+    // Print Cell Names and ID from libcell_to_id and Type ID
+    for (auto& cell : libcell_to_id) {
+      std::cout << "Cell Name: " << cell.first << " ID: " << cell.second << " Type ID: " << libcell_to_type_id[cell.first] << std::endl;
+    }
+
+  
+
+
+    
+
     
     PinSequenceCollector collector;
 
@@ -473,8 +558,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     // Placeholder for string to id maps and id to embedding maps
     const std::unordered_map<std::string, int> pin_name_to_id;
     const std::unordered_map<std::string, int> cell_name_to_id;
-    const std::unordered_map<std::string, int> cell_type_to_id;
-    const std::unordered_map<int, std::vector<float>> cell_type_embeddings;
+    //const std::unordered_map<std::string, int> cell_type_to_id;
+    //const std::unordered_map<int, std::vector<float>> cell_type_embeddings;
 
 
     std::cout << "Debug Point 7" << std::endl;
@@ -484,8 +569,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     auto builder = SequenceArrayBuilder(collector.getSequences(),
                                       pin_name_to_id,
                                       cell_name_to_id,
-                                      cell_type_to_id,
-                                      cell_type_embeddings);
+                                      libcell_to_type_id,
+                                      libcell_to_type_embedding);
 
     auto [data_array, pin_ids, cell_ids, cell_type_ids] = builder.build();      
     */
