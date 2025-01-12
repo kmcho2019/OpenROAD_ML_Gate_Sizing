@@ -87,11 +87,11 @@ class MLGateSizer : public sta::dbStaState
 
 
       // Constructor for easier initialization
-      PinMetrics(const std::string& pin_name, const std::string& cell_name, const std::string& cell_type, float x_loc, float y_loc, float p2p_dist, float hpwl, float input_pin_cap, float wire_cap, float pin_cap, float total_cap, float fanout, float arc_delay, float reachable_endpoints, bool is_in_clock_nets, bool is_in_clock, float max_cap, float max_slew, float rise_slew, float fall_slew, float slack, float rise_arrival_time, float fall_arrival_time) 
-        : pin_name(pin_name), cell_name(cell_name), cell_type(cell_type), x_loc(x_loc), y_loc(y_loc), p2p_dist(p2p_dist), hpwl(hpwl), input_pin_cap(input_pin_cap), wire_cap(wire_cap), pin_cap(pin_cap), total_cap(total_cap), fanout(fanout), arc_delay(arc_delay), reachable_endpoints(reachable_endpoints), is_in_clock_nets(is_in_clock_nets), is_in_clock(is_in_clock), max_cap(max_cap), max_slew(max_slew), rise_slew(rise_slew), fall_slew(fall_slew), slack(slack), rise_arrival_time(rise_arrival_time), fall_arrival_time(fall_arrival_time) {}
+      PinMetrics(const std::string& pin_name, const std::string& cell_name, const std::string& cell_type, float x_loc, float y_loc, float p2p_dist, float hpwl, float input_pin_cap, float wire_cap, float pin_cap, float total_cap, float fanout, float arc_delay, float reachable_endpoints, bool is_in_clock_nets, bool is_in_clock, bool is_port, float max_cap, float max_slew, float rise_slew, float fall_slew, float slack, float rise_arrival_time, float fall_arrival_time) 
+        : pin_name(pin_name), cell_name(cell_name), cell_type(cell_type), x_loc(x_loc), y_loc(y_loc), p2p_dist(p2p_dist), hpwl(hpwl), input_pin_cap(input_pin_cap), wire_cap(wire_cap), pin_cap(pin_cap), total_cap(total_cap), fanout(fanout), arc_delay(arc_delay), reachable_endpoints(reachable_endpoints), is_in_clock_nets(is_in_clock_nets), is_in_clock(is_in_clock), is_port(is_port), max_cap(max_cap), max_slew(max_slew), rise_slew(rise_slew), fall_slew(fall_slew), slack(slack), rise_arrival_time(rise_arrival_time), fall_arrival_time(fall_arrival_time) {}
 
       // Print function for debugging
-      void print() {
+      void print() const {
           std::cout << "Pin Name: " << pin_name << std::endl;
           std::cout << "Cell Name: " << cell_name << std::endl;
           std::cout << "Cell Type: " << cell_type << std::endl;
