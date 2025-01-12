@@ -83,8 +83,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                               // seems to be setup time slack which is more
                               // relevant for gatesizing min/holdtime slack have
                               // to be fixed with buffer insertion)
-      10,                     // group_count
-      10,                     // endpoint_count
+      10 * endpoints->size(), // group_count
+      endpoints->size(),      // endpoint_count
       true,                   // unique_pins
       -sta::INF,
       sta::INF,  // slack_min, slack_max
@@ -96,6 +96,9 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       false,
       false,
       false);
+  // In addition or alternatively,
+  // consider using vertexWorstSlackPath to find the critical path for each
+  // endpoint
   std::cout << "Debug Point 3" << std::endl;
   // If no critical path is found, print a message
   if (path_ends.empty()) {
@@ -558,9 +561,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
   }
 
-  // In addition or alternatively,
-  // consider using vertexWorstSlackPath to find the critical path for each
-  // endpoint
+
 
   // Next step is extracting the data from each pin
   // Then, transform the data into the format expected by the transformer model
