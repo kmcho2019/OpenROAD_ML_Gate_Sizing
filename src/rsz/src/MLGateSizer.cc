@@ -68,9 +68,9 @@ void MLGateSizer::getEndpointAndCriticalPaths()
   std::cout << "Found " << endpoints->size() << " endpoints." << std::endl;
 
 
-  std::cout << "Debug Point 1" << std::endl;
+  //std::cout << "Debug Point 1" << std::endl;
 
-  std::cout << "Debug Point 2" << std::endl;
+  //std::cout << "Debug Point 2" << std::endl;
 
   // Retrieve the critical path for the endpoint
   sta::PathEndSeq path_ends = sta_->search()->findPathEnds(
@@ -99,7 +99,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
   // In addition or alternatively,
   // consider using vertexWorstSlackPath to find the critical path for each
   // endpoint
-  std::cout << "Debug Point 3" << std::endl;
+  //std::cout << "Debug Point 3" << std::endl;
   // If no critical path is found, print a message
   if (path_ends.empty()) {
     std::cout << "No critical paths found " << std::endl;
@@ -406,6 +406,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
             cell_id++;
           }
 
+          /*
           // Output all collected data (for debugging)
           std::cout << "Pin(" << path_count << "-" << i << "): " << pin_name << "\n"
                     << "X: " << pin_loc.x() << "\n"
@@ -433,6 +434,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                     << min_slack << "\n"
                     << "Rise/Fall Arrival Time: " << rise_arrival_time << "/" << fall_arrival_time << "\n"
                     << "Input Pin Cap: " << input_pin_cap << "\n\n";
+          */
           // Fill in the PinMetrics object
           pin_metrics.pin_name = pin_name;
           pin_metrics.cell_name = cell_name;
@@ -475,7 +477,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       }
       path_count++;
 
-      std::cout << "Debug Point 4" << std::endl;
+      //std::cout << "Debug Point 4" << std::endl;
 
       // Finalize the collection
       collector.finalize();
@@ -488,22 +490,16 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
     // Start processing the collected data
 
-    std::cout << "Debug Point 5" << std::endl;
+    //std::cout << "Debug Point 5" << std::endl;
 
     const auto& sequences = collector.getSequences();
 
     // Need to convert the sequences into a format that can be used by the transformer model
 
-    std::cout << "Debug Point 6" << std::endl;
-
-    // Placeholder for string to id maps and id to embedding maps
-    //const std::unordered_map<std::string, int> pin_name_to_id;
-    //const std::unordered_map<std::string, int> cell_name_to_id;
-    //const std::unordered_map<std::string, int> cell_type_to_id;
-    //const std::unordered_map<int, std::vector<float>> cell_type_embeddings;
+    //std::cout << "Debug Point 6" << std::endl;
 
 
-    std::cout << "Debug Point 7" << std::endl;
+    //std::cout << "Debug Point 7" << std::endl;
 
     
     
@@ -516,8 +512,9 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     auto [data_array, pin_ids, cell_ids, cell_type_ids] = builder.build();
 
 
+    
     // Debugging print statements to check data_array and cell_type_ids
-
+    
     // Print shape of the data_array, pin_ids, cell_ids, and cell_type_ids
     // N = number of sequences, L = max sequence length, D = number of features(token dimensions = pin_data + embedding)
     // data_array shape: (N, L, D)
@@ -557,6 +554,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     for (size_t i = 0; i < path_slacks.size(); i++) {
       std::cout << "Path " << i << " Slack: " << path_slacks[i] << std::endl;
     }
+    
 
 
   }
