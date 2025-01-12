@@ -592,7 +592,44 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                                       libcell_to_type_id,
                                       libcell_to_type_embedding);
 
-    auto [data_array, pin_ids, cell_ids, cell_type_ids] = builder.build();      
+    auto [data_array, pin_ids, cell_ids, cell_type_ids] = builder.build();
+
+
+    // Debugging print statements to check data_array and cell_type_ids
+
+    // Print shape of the data_array, pin_ids, cell_ids, and cell_type_ids
+    // N = number of sequences, L = max sequence length, D = number of features(token dimensions = pin_data + embedding)
+    // data_array shape: (N, L, D)
+    // pin_ids shape: (N, L): Pin IDs are used to lookup the pin name
+    // cell_ids shape: (N, L): Cell IDs are used to lookup the cell name
+    // cell_type_ids shape: (N, L): Cell Type IDs are used to lookup the cell type name
+    std::cout << "Data Array Shape: (" << data_array.size() << ", " << data_array[0].size() << ", " << data_array[0][0].size() << ")" << std::endl;
+    std::cout << "Pin IDs Shape: (" << pin_ids.size() << ", " << pin_ids[0].size() << ")" << std::endl;
+    std::cout << "Cell IDs Shape: (" << cell_ids.size() << ", " << cell_ids[0].size() << ")" << std::endl;
+    std::cout << "Cell Type IDs Shape: (" << cell_type_ids.size() << ", " << cell_type_ids[0].size() << ")" << std::endl;
+
+    // Print example of the data_array (N, L, D), first 5 tokens of the first 2 sequence
+    for (size_t o = 0; o < ((2 > data_array.size()) ? data_array.size() : 2); o++) {
+      std::cout << "Sequence " << o << ": " << std::endl;
+      for (size_t i = 0; i < ((5 > data_array[o].size()) ? data_array[o].size() : 5); i++) {
+        std::cout << "Token " << i << ": ";
+        for (size_t j = 0; j < data_array[0][0].size(); j++) {
+          std::cout << data_array[o][i][j] << " ";
+        }
+        std::cout << std::endl;
+      }
+    }
+
+    // Print cell_type_ids for the first 5 tokens of the first 2 sequences
+    for (size_t o = 0; o < ((2 > data_array.size()) ? data_array.size() : 2); o++) {
+      std::cout << "Sequence " << o << ": " << std::endl;
+      for (size_t i = 0; i < ((5 > data_array[o].size()) ? data_array[o].size() : 5); i++) {
+        std::cout << "Cell Type ID " << i << ": " << cell_type_ids[o][i] << std::endl;
+      }
+    }
+
+
+
     
 
     // Print out the slack of each path (for debugging), remove later
