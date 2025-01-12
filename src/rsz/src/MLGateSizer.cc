@@ -200,9 +200,13 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     std::unordered_map<std::string, int> libcell_to_id;
     std::unordered_map<std::string, int> libcell_to_type_id; // equivalent libcells share the same, Uses EquivCells
     std::unordered_map<int, std::vector<float>> libcell_to_type_embedding;
+    std::unordered_map<std::string, int> pin_name_to_id; // Initialize them as empty and build them up during pin retrieval process
+    std::unordered_map<std::string, int> cell_name_to_id; // Initialize them as empty and build them up during pin retrieval process
 
     int libcell_id = 0;
     int libcell_type_id = 0;
+    int pin_id = 0;
+    int cell_id = 0;
     odb::dbDatabase* db = sta_->db();
     for (odb::dbLib* lib : db->getLibs()) {
       for (odb::dbMaster* master : lib->getMasters()) {
@@ -465,8 +469,24 @@ void MLGateSizer::getEndpointAndCriticalPaths()
           // Network name of the pin
           std::string net_name = net ? network_->name(net) : "None";
 
+          // Pin Name
+          std::string pin_name = network_->name(pin);
+
+
+          // Assign pin_id and cell_id
+          if (pin_name_to_id.find(pin_name) == pin_name_to_id.end()) {
+            // Pin name doesn't exist, add it to the map with the current pin_id
+            pin_name_to_id[pin_name] = pin_id;
+            pin_id++;
+          }
+          if (cell_name_to_id.find(cell_name) == cell_name_to_id.end()) {
+            // Pin name doesn't exist, add it to the map with the current pin_id
+            cell_name_to_id[cell_name] = cell_id;
+            cell_id++;
+          }
+
           // Output all collected data (for debugging)
-          std::cout << "Pin(" << path_count << "-" << i << "): " << network_->name(pin) << "\n"
+          std::cout << "Pin(" << path_count << "-" << i << "): " << pin_name << "\n"
                     << "X: " << pin_loc.x() << "\n"
                     << "Y: " << pin_loc.y() << "\n"
                     << "Pin-to-Pin Distance: " << p2p_dist << "\n"
@@ -493,7 +513,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                     << "Rise/Fall Arrival Time: " << rise_arrival_time << "/" << fall_arrival_time << "\n"
                     << "Input Pin Cap: " << input_pin_cap << "\n\n";
           // Fill in the PinMetrics object
-          pin_metrics.pin_name = network_->name(pin);
+          pin_metrics.pin_name = pin_name;
           pin_metrics.cell_name = cell_name;
           pin_metrics.cell_type = cell_type;
           pin_metrics.x_loc = pin_loc.x();
@@ -556,8 +576,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     std::cout << "Debug Point 6" << std::endl;
 
     // Placeholder for string to id maps and id to embedding maps
-    const std::unordered_map<std::string, int> pin_name_to_id;
-    const std::unordered_map<std::string, int> cell_name_to_id;
+    //const std::unordered_map<std::string, int> pin_name_to_id;
+    //const std::unordered_map<std::string, int> cell_name_to_id;
     //const std::unordered_map<std::string, int> cell_type_to_id;
     //const std::unordered_map<int, std::vector<float>> cell_type_embeddings;
 
@@ -565,7 +585,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     std::cout << "Debug Point 7" << std::endl;
 
     
-    /*
+    
     auto builder = SequenceArrayBuilder(collector.getSequences(),
                                       pin_name_to_id,
                                       cell_name_to_id,
@@ -573,7 +593,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                                       libcell_to_type_embedding);
 
     auto [data_array, pin_ids, cell_ids, cell_type_ids] = builder.build();      
-    */
+    
 
     // Print out the slack of each path (for debugging), remove later
     for (size_t i = 0; i < path_slacks.size(); i++) {
