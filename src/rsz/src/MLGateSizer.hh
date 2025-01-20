@@ -278,11 +278,25 @@ class MLGateSizer : public sta::dbStaState
 
   // Naive encoder-like transformer forward pass (initial implementation)
   std::vector<std::vector<std::vector<float>>> runTransformer(
-      const std::vector<std::vector<std::vector<float>>>& data_array);
+      const std::vector<std::vector<std::vector<float>>>& data_array,
+      int num_heads,
+      size_t N,
+      size_t L,
+      size_t D_in,
+      size_t D_model,
+      size_t FF_hidden_dim,
+      int num_encoder_layers);
 
   // Eigen-based version, more efficient
   std::vector<std::vector<std::vector<float>>> runTransformerEigen(
-      const std::vector<std::vector<std::vector<float>>>& data_array);
+      const std::vector<std::vector<std::vector<float>>>& data_array,
+      int num_heads,
+      size_t N,
+      size_t L,
+      size_t D_in,
+      size_t D_model,
+      size_t FF_hidden_dim,
+      int num_encoder_layers);
 
   // Compare two transformer outputs for correctness
   bool compareOutputs(

@@ -87,7 +87,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                               // seems to be setup time slack which is more
                               // relevant for gatesizing min/holdtime slack have
                               // to be fixed with buffer insertion)
-      10 * endpoints->size(), // group_count
+      1000, //10 * endpoints->size(), // group_count
       endpoints->size(),      // endpoint_count
       true,                   // unique_pins
       -sta::INF,
@@ -560,7 +560,81 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     }
     */
 
-    auto outputs = runTransformer(data_array);  // Run the transformer model
+    int num_heads = 4;
+    size_t N = data_array.size();
+    size_t L = data_array[0].size();
+    size_t D_in = data_array[0][0].size();
+    size_t D_model = 64;
+    size_t FF_hidden_dim = 4 * D_model;
+    int num_encoder_layers = 2;
+
+    // Calculate the number of parameters in the model
+    // Initial Projection weights: (D_in x D_model)
+    // Q, K, V, O weights: (D_model x D_model) x 4
+    // FF weights: (D_model x FF_hidden_dim) x 2 + FF_hidden_dim + D_model
+    size_t model_params = (D_model * D_model + D_model) * 4 * num_encoder_layers + (D_model * D_in + D_in) * num_encoder_layers + (D_model * FF_hidden_dim + FF_hidden_dim) * num_encoder_layers;
+
+    auto outputs = runTransformer(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);  // Run the transformer model
+    auto eigen_outputs = runTransformerEigen(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);  // Run the transformer model using Eigen
+
+    // Debugging print statements to check outputs
+    // 1) Benchmark NAIVE
+    long long naive_us = benchmark([&](){
+      auto out_naive = runTransformer(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);
+    });
+    // 2) Benchmark EIGEN
+    long long eigen_us = benchmark([&](){
+      auto out_eigen = runTransformerEigen(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);
+    });
+
+    // 3) Actually store the outputs to compare correctness
+    auto out_naive  = runTransformer(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);
+    auto out_eigen  = runTransformerEigen(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);
+    bool ok = compareOutputs(out_naive, out_eigen, 1e-3f);
+
+    // 4) Print the speed & correctness info
+    // total tokens processed: N*L
+    size_t total_tokens = data_array.size() * data_array[0].size();
+
+    std::cout << "Model parameters: " << model_params << std::endl;
+
+    std::cout << "Total tokens: " << total_tokens << ": " << data_array.size() << "X" << data_array[0].size() << std::endl;
+
+    std::cout << "NAIVE  time: " << naive_us << " us   => "
+              << (1e6 * double(total_tokens) / double(naive_us))
+              << " tokens/sec\n";
+    std::cout << "EIGEN  time: " << eigen_us << " us   => "
+              << (1e6 * double(total_tokens) / double(eigen_us))
+              << " tokens/sec\n";
+    std::cout << "Outputs match? " << (ok ? "YES" : "NO") << std::endl;
+
+    // If the outputs don't match, print the output first 5 tokens of the first 2 sequences or before the data ends
+    // Print both NAIVE and EIGEN outputs for easy comparison and debugging
+    if (!ok) {
+      std::cout << "NAIVE:" << std::endl;
+      for (size_t o = 0; o < ((2 > out_naive.size()) ? out_naive.size() : 2); o++) {
+        std::cout << "Sequence " << o << ": " << std::endl;
+        for (size_t i = 0; i < ((5 > out_naive[o].size()) ? out_naive[o].size() : 5); i++) {
+          std::cout << "Token " << i << ": ";
+          for (size_t j = 0; j < out_naive[0][0].size(); j++) {
+            std::cout << out_naive[o][i][j] << " ";
+          }
+          std::cout << std::endl;
+        }
+      }
+      std::cout << "EIGEN:" << std::endl;
+      for (size_t o = 0; o < ((2 > out_eigen.size()) ? out_eigen.size() : 2); o++) {
+        std::cout << "Sequence " << o << ": " << std::endl;
+        for (size_t i = 0; i < ((5 > out_eigen[o].size()) ? out_eigen[o].size() : 5); i++) {
+          std::cout << "Token " << i << ": ";
+          for (size_t j = 0; j < out_eigen[0][0].size(); j++) {
+            std::cout << out_eigen[o][i][j] << " ";
+          }
+          std::cout << std::endl;
+        }
+      }
+    }
+
 
 
   }
@@ -658,15 +732,21 @@ static void layerNorm(std::vector<std::vector<float>>& seq, float eps = 1e-5f)
 // ------------------------------------------------------------
 static std::vector<std::vector<float>> multiHeadSelfAttention(
     const std::vector<std::vector<float>>& seq,
-    int num_heads)
+    int num_heads,
+    size_t D,
+    size_t L,
+    std::vector<std::vector<float>>& Wq,
+    std::vector<std::vector<float>>& Wk,
+    std::vector<std::vector<float>>& Wv,
+    std::vector<std::vector<float>>& Wo)
 {
   // seq shape: [L x D]
   // Return shape: [L x D]
-  const size_t L = seq.size();
+  //const size_t L = seq.size();
   if (L == 0) {
     return seq; // nothing to do
   }
-  const size_t D = seq[0].size();
+  //const size_t D = seq[0].size();
   assert(D % num_heads == 0 && "D must be divisible by num_heads");
   size_t Dh = D / num_heads;
 
@@ -685,9 +765,9 @@ static std::vector<std::vector<float>> multiHeadSelfAttention(
     return mat;
   };
 
-  std::vector<std::vector<float>> Wq = randomMatrix(D, D);
-  std::vector<std::vector<float>> Wk = randomMatrix(D, D);
-  std::vector<std::vector<float>> Wv = randomMatrix(D, D);
+  //std::vector<std::vector<float>> Wq = randomMatrix(D, D);
+  //std::vector<std::vector<float>> Wk = randomMatrix(D, D);
+  //std::vector<std::vector<float>> Wv = randomMatrix(D, D);
 
   // 2) Flatten seq from [L x D] to a form we can do matMul with:
   // For matMul, we treat it as [L x D].
@@ -778,7 +858,7 @@ static std::vector<std::vector<float>> multiHeadSelfAttention(
 
   // 6) Output projection
   // We'll define Wo: [D x D] for simplicity
-  std::vector<std::vector<float>> Wo = randomMatrix(D, D);
+  //std::vector<std::vector<float>> Wo = randomMatrix(D, D);
 
   // outSeq * Wo: [L x D] * [D x D] => [L x D]
   auto finalOut = matMul(outSeq, Wo);
@@ -792,15 +872,22 @@ static std::vector<std::vector<float>> multiHeadSelfAttention(
 // For demonstration, we just define random W1, b1, W2, b2
 // ------------------------------------------------------------
 static std::vector<std::vector<float>> feedForward(
-    const std::vector<std::vector<float>>& seq)
+    const std::vector<std::vector<float>>& seq,
+    size_t L,
+    size_t D,
+    size_t H,
+    std::vector<std::vector<float>>& W1,
+    std::vector<std::vector<float>>& W2,
+    std::vector<float>& b1,
+    std::vector<float>& b2)
 {
   // seq shape: [L x D]
   // Let hidden dim = 2D for example
   if (seq.empty()) return seq;
 
-  const size_t L = seq.size();
-  const size_t D = seq[0].size();
-  const size_t H = 2 * D; // arbitrary
+  //const size_t L = seq.size();
+  //const size_t D = seq[0].size();
+  //const size_t H = 2 * D; // arbitrary
 
   static std::mt19937 rng(123);
   std::uniform_real_distribution<float> dist(-0.1f, 0.1f);
@@ -824,10 +911,10 @@ static std::vector<std::vector<float>> feedForward(
     return vec;
   };
 
-  std::vector<std::vector<float>> W1 = randomMatrix(D, H);
-  std::vector<std::vector<float>> W2 = randomMatrix(H, D);
-  std::vector<float> b1 = randomVector(H);
-  std::vector<float> b2 = randomVector(D);
+  //std::vector<std::vector<float>> W1 = randomMatrix(D, H);
+  //std::vector<std::vector<float>> W2 = randomMatrix(H, D);
+  //std::vector<float> b1 = randomVector(H);
+  //std::vector<float> b2 = randomVector(D);
 
   // 1) Compute seq * W1 => shape [L x H]
   auto tmp = matMul(seq, W1);
@@ -870,25 +957,32 @@ static std::vector<std::vector<float>> feedForward(
 // Each class corresponding to the libcell.
 // --------------------------------------------------------------------
 std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
-    const std::vector<std::vector<std::vector<float>>>& data_array)
+    const std::vector<std::vector<std::vector<float>>>& data_array,
+    int num_heads,
+    size_t N,
+    size_t L,
+    size_t D_in,
+    size_t D_model,
+    size_t FF_hidden_dim,
+    int num_encoder_layers)
 {
-  size_t N = data_array.size();
+  //size_t N = data_array.size();
   if (N == 0) return {};
 
-  size_t L = data_array[0].size();
+  //size_t L = data_array[0].size();
   if (L == 0) return {};
 
   // Original input dimension
-  size_t D_in = data_array[0][0].size();
+  //size_t D_in = data_array[0][0].size();
 
   // Decide how many heads we want
-  const int num_heads = 4;
+  //const int num_heads = 4;
 
   // Decide a model dimension that is divisible by num_heads
-  size_t D_model = 64;
+  //size_t D_model = 64;
 
   // Number of encoder layers
-  const int num_encoder_layers = 2;
+  //const int num_encoder_layers = 2;
 
   // We will random-initialize projection weights:
   static std::mt19937 rng(999);
@@ -904,11 +998,34 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
     }
     return mat;
   };
+  auto randomVector = [&](size_t size) {
+    std::vector<float> vec(size, 0.0f);
+    for (size_t i = 0; i < size; i++) {
+      vec[i] = dist(rng);
+    }
+    return vec;
+  };
 
   // If you want to map back to D_in:
   // W_out: [D_model x D_in]
   auto W_in  = randomMatrix(D_in, D_model);
   auto W_out = randomMatrix(D_model, D_in);
+
+  // Allocate Q, K, V, O projection matrices
+  auto Wq = randomMatrix(D_model, D_model);
+  auto Wk = randomMatrix(D_model, D_model);
+  auto Wv = randomMatrix(D_model, D_model);
+  auto Wo = randomMatrix(D_model, D_model);
+
+  // Allocate FF weights
+  // FF_W1: [D_model x FF_hidden_dim]
+  // FF_b1: [FF_hidden_dim]
+  // FF_W2: [FF_hidden_dim x D_model]
+  // FF_b2: [D_model]
+  auto FF_W1 = randomMatrix(D_model, FF_hidden_dim);
+  auto FF_W2 = randomMatrix(FF_hidden_dim, D_model);
+  auto FF_b1 = randomVector(FF_hidden_dim);
+  auto FF_b2 = randomVector(D_model);
 
   // Allocate output
   std::vector<std::vector<std::vector<float>>> output(N,
@@ -926,7 +1043,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
     std::vector<std::vector<float>> x = seq_proj; // shape [L x D_model]
     for (int layer = 0; layer < num_encoder_layers; layer++) {
       // (a) Multi-head self-attention
-      auto attn_out = multiHeadSelfAttention(x, num_heads);
+      auto attn_out = multiHeadSelfAttention(x, num_heads, D_model, L, Wq, Wk, Wv, Wo);
       // (b) Residual
       for (size_t l_ = 0; l_ < L; l_++) {
         for (size_t d_ = 0; d_ < D_model; d_++) {
@@ -937,7 +1054,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
       layerNorm(attn_out);
 
       // (d) FeedForward
-      auto ff_out = feedForward(attn_out);
+      auto ff_out = feedForward(attn_out, L, D_model, FF_hidden_dim, FF_W1, FF_W2, FF_b1, FF_b2);
       // (e) Residual
       for (size_t l_ = 0; l_ < L; l_++) {
         for (size_t d_ = 0; d_ < D_model; d_++) {
@@ -962,12 +1079,20 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
   return output;
 }
 
-static Eigen::MatrixXf eigenSelfAttention(const Eigen::MatrixXf& seq, int num_heads)
+static Eigen::MatrixXf eigenSelfAttention(
+  const Eigen::MatrixXf& seq, 
+  int num_heads,
+  size_t D,
+  size_t L,
+  Eigen::MatrixXf& Wq,
+  Eigen::MatrixXf& Wk,
+  Eigen::MatrixXf& Wv,
+  Eigen::MatrixXf& Wo)
 {
   // seq shape: [L x D]
   // Return shape: [L x D]
-  const int L = seq.rows();
-  const int D = seq.cols();
+  //const int L = seq.rows();
+  //const int D = seq.cols();
 
   assert(D % num_heads == 0 && "D must be divisible by num_heads");
   size_t Dh = D / num_heads;
@@ -988,9 +1113,12 @@ static Eigen::MatrixXf eigenSelfAttention(const Eigen::MatrixXf& seq, int num_he
   };
 
   // Wq,Wk,Wv => [D x D]
-  Eigen::MatrixXf Wq = randomMatrix(D,D);
-  Eigen::MatrixXf Wk = randomMatrix(D,D);
-  Eigen::MatrixXf Wv = randomMatrix(D,D);
+  //Eigen::MatrixXf Wq = randomMatrix(D,D);
+  //Eigen::MatrixXf Wk = randomMatrix(D,D);
+  //Eigen::MatrixXf Wv = randomMatrix(D,D);
+  // Output projection
+  // We'll define Wo: [D x D] for simplicity
+  //Eigen::MatrixXf Wo = randomMatrix(D,D);
 
   // Q,K,V => [L x D] * [D x D] => [L x D]
   Eigen::MatrixXf Q = seq * Wq;
@@ -1069,21 +1197,27 @@ static Eigen::MatrixXf eigenSelfAttention(const Eigen::MatrixXf& seq, int num_he
     }
   }
 
-  // Output projection
-  // We'll define Wo: [D x D] for simplicity
-  Eigen::MatrixXf Wo = randomMatrix(D,D);
+
 
   Eigen::MatrixXf finalOut = out * Wo;
 
   return finalOut;
 }
 
-static Eigen::MatrixXf eigenFF(const Eigen::MatrixXf& seq)
+static Eigen::MatrixXf eigenFF(
+  const Eigen::MatrixXf& seq,
+  size_t L,
+  size_t D,
+  size_t H,
+  Eigen::MatrixXf& W1,
+  Eigen::MatrixXf& W2,
+  Eigen::VectorXf& b1,
+  Eigen::VectorXf& b2)
 {
   // seq: L x D, do 2D hidden layer
-  int L = seq.rows();
-  int D = seq.cols();
-  int H = 2*D;
+  //int L = seq.rows();
+  //int D = seq.cols();
+  //int H = 2*D;
 
   static std::mt19937 rng(123);
   std::uniform_real_distribution<float> dist(-0.1f, 0.1f);
@@ -1105,10 +1239,10 @@ static Eigen::MatrixXf eigenFF(const Eigen::MatrixXf& seq)
     return v;
   };
 
-  Eigen::MatrixXf W1 = rMat(D,H);
-  Eigen::VectorXf b1 = rVec(H);
-  Eigen::MatrixXf W2 = rMat(H,D);
-  Eigen::VectorXf b2 = rVec(D);
+  //Eigen::MatrixXf W1 = rMat(D,H);
+  //Eigen::VectorXf b1 = rVec(H);
+  //Eigen::MatrixXf W2 = rMat(H,D);
+  //Eigen::VectorXf b2 = rVec(D);
 
   // tmp = seq*W1 + b1 => [L x H]
   Eigen::MatrixXf tmp = seq * W1;
@@ -1165,39 +1299,53 @@ static void eigenLayerNorm(Eigen::MatrixXf& seq, float eps=1e-5f)
 // Each class corresponding to the libcell.
 // --------------------------------------------------------------------
 std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
-    const std::vector<std::vector<std::vector<float>>>& data_array)
+    const std::vector<std::vector<std::vector<float>>>& data_array,
+    int num_heads,
+    size_t N,
+    size_t L,
+    size_t D_in,
+    size_t D_model,
+    size_t FF_hidden_dim,
+    int num_encoder_layers)
 {
-  size_t N = data_array.size();
+  //size_t N = data_array.size();
   if (N == 0) return {};
 
-  size_t L = data_array[0].size();
+  //size_t L = data_array[0].size();
   if (L == 0) return {};
 
   // Original input dimension
-  size_t D_in = data_array[0][0].size();
+  //size_t D_in = data_array[0][0].size();
 
   // Decide how many heads we want
-  const int num_heads = 4;
+  //const int num_heads = 4;
 
   // Decide a model dimension that is divisible by num_heads
-  size_t D_model = 64;
+  //size_t D_model = 64;
 
   // Number of encoder layers
-  const int num_encoder_layers = 2;
+  //const int num_encoder_layers = 2;
 
   // We will random-initialize projection weights:
   static std::mt19937 rng(999);
   std::uniform_real_distribution<float> dist(-0.05f, 0.05f);
 
   // W_in: [D_in x D_model]
-  auto randomMatrix = [&](size_t rows, size_t cols) {
-    std::vector<std::vector<float>> mat(rows, std::vector<float>(cols, 0.f));
-    for (size_t r = 0; r < rows; r++) {
-      for (size_t c = 0; c < cols; c++) {
-        mat[r][c] = dist(rng);
+  auto randomMatrix = [&](size_t r, size_t c){
+    Eigen::MatrixXf m(r,c);
+    for(int i=0; i<r; i++){
+      for(int j=0; j<c; j++){
+        m(i,j) = dist(rng);
       }
     }
-    return mat;
+    return m;
+  };
+  auto randomVector = [&](size_t len){
+    Eigen::VectorXf v(len);
+    for(int i=0; i<len; i++){
+      v(i) = dist(rng);
+    }
+    return v;
   };
 
   // If you want to map back to D_in:
@@ -1205,9 +1353,28 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
   auto W_in  = randomMatrix(D_in, D_model);
   auto W_out = randomMatrix(D_model, D_in);
 
+  // Allocate Q, K, V, O projection matrices
+  // Wq/Wk/Wv/Wo: [D_model x D_model]
+  auto Wq = randomMatrix(D_model, D_model);
+  auto Wk = randomMatrix(D_model, D_model);
+  auto Wv = randomMatrix(D_model, D_model);
+  auto Wo = randomMatrix(D_model, D_model);
+
+  // Allocate FF weights
+  // FF_W1: [D_model x FF_hidden_dim]
+  // FF_W2: [FF_hidden_dim x D_model]
+  // FF_b1: [FF_hidden_dim]
+  // FF_b2: [D_model]
+  auto FF_W1 = randomMatrix(D_model, FF_hidden_dim);
+  auto FF_W2 = randomMatrix(FF_hidden_dim, D_model);
+  auto FF_b1 = randomVector(FF_hidden_dim);
+  auto FF_b2 = randomVector(D_model);
+
+
   // Allocate output
   std::vector<std::vector<std::vector<float>>> output(N,
       std::vector<std::vector<float>>(L, std::vector<float>(D_in, 0.f)));
+  
   
   // For each sequence in the batch:
   for (size_t n = 0; n < N; n++) {
@@ -1220,21 +1387,20 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
     }
 
     // 1) Project seq => [L x D_model]
-    Eigen::MatrixXf seq_proj = seq * Eigen::Map<Eigen::MatrixXf>(
-        W_in[0].data(), D_in, D_model);
+    Eigen::MatrixXf seq_proj = seq * W_in;
 
     // 2) Run through encoder blocks
     Eigen::MatrixXf x = seq_proj; // shape [L x D_model]
     for (int layer = 0; layer < num_encoder_layers; layer++) {
       // (a) Multi-head self-attention
-      auto attn_out = eigenSelfAttention(x, num_heads);
+      auto attn_out = eigenSelfAttention(x, num_heads, D_model, L, Wq, Wk, Wv, Wo);
       // (b) Residual
       x += attn_out;
       // (c) LayerNorm
       eigenLayerNorm(x);
 
       // (d) FeedForward
-      auto ff_out = eigenFF(x);
+      auto ff_out = eigenFF(x, L, D_model, FF_hidden_dim, FF_W1, FF_W2, FF_b1, FF_b2);
       // (e) Residual
       x += ff_out;
       // (f) LayerNorm
@@ -1242,8 +1408,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
     }
 
     // x is now [L x D_model]. Project back to [L x D_in]
-    Eigen::MatrixXf final_out = x * Eigen::Map<Eigen::MatrixXf>(
-        W_out[0].data(), D_model, D_in);
+    Eigen::MatrixXf final_out = x * W_out;
 
     // Store final_out in output[n]
     for (size_t l = 0; l < L; l++) {
