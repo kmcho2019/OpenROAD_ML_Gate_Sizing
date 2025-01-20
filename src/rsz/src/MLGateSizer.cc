@@ -87,7 +87,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                               // seems to be setup time slack which is more
                               // relevant for gatesizing min/holdtime slack have
                               // to be fixed with buffer insertion)
-      1000, //10 * endpoints->size(), // group_count
+      2000, //10 * endpoints->size(), // group_count
       endpoints->size(),      // endpoint_count
       true,                   // unique_pins
       -sta::INF,
@@ -560,24 +560,27 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     }
     */
 
-    int num_heads = 4;
-    size_t N = data_array.size();
-    size_t L = data_array[0].size();
-    size_t D_in = data_array[0][0].size();
-    size_t D_model = 64;
-    size_t FF_hidden_dim = 4 * D_model;
-    int num_encoder_layers = 2;
+    int num_heads = 8;//4;
+    size_t N = data_array.size(); // Number of sequences (100)
+    size_t L = data_array[0].size();  // Max sequence length (78)
+    size_t D_in = data_array[0][0].size();  // Input feature dimensions (17)
+    size_t D_model = 128;//64; // Transformer model hidden dimensions (64)
+    size_t FF_hidden_dim = 4 * D_model; // Feedforward hidden dimensions (256)
+    int num_encoder_layers = 6;//2;
 
     // Calculate the number of parameters in the model
     // Initial Projection weights: (D_in x D_model)
-    // Q, K, V, O weights: (D_model x D_model) x 4
-    // FF weights: (D_model x FF_hidden_dim) x 2 + FF_hidden_dim + D_model
-    size_t model_params = (D_model * D_model + D_model) * 4 * num_encoder_layers + (D_model * D_in + D_in) * num_encoder_layers + (D_model * FF_hidden_dim + FF_hidden_dim) * num_encoder_layers;
+    // Transformer Encoder layers: num_encoder_layers
+    // - Q, K, V, O weights: (D_model x D_model) x 4
+    // - FF weights: (D_model x FF_hidden_dim) x 2 + FF_hidden_dim + D_model
+    // Final Output Projection weights: (D_model x D_in)
+    size_t model_params = ((D_model * D_model) * 4 + (D_model * FF_hidden_dim) * 2 + FF_hidden_dim + D_model) * num_encoder_layers + (D_in * D_model) * 2;
 
     auto outputs = runTransformer(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);  // Run the transformer model
     auto eigen_outputs = runTransformerEigen(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);  // Run the transformer model using Eigen
 
     // Debugging print statements to check outputs
+    /*
     // 1) Benchmark NAIVE
     long long naive_us = benchmark([&](){
       auto out_naive = runTransformer(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);
@@ -586,10 +589,16 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     long long eigen_us = benchmark([&](){
       auto out_eigen = runTransformerEigen(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);
     });
-
+    */
     // 3) Actually store the outputs to compare correctness
+    auto start = std::chrono::steady_clock::now();
     auto out_naive  = runTransformer(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);
+    auto end = std::chrono::steady_clock::now();
+    auto naive_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    start = std::chrono::steady_clock::now();
     auto out_eigen  = runTransformerEigen(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);
+    end = std::chrono::steady_clock::now();
+    auto eigen_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     bool ok = compareOutputs(out_naive, out_eigen, 1e-3f);
 
     // 4) Print the speed & correctness info
@@ -952,7 +961,17 @@ static std::vector<std::vector<float>> feedForward(
 //     Y = LN( X + MultiHeadAttn(X) )
 //     Z = LN( Y + FF(Y) )
 // Return Z
-// 
+//
+// FF is a simple 2-layer feed-forward network: ReLU(x*W1 + b1)*W2 + b2
+// - x: [L x D_model]
+// - W1: [D_model x FF_hidden_dim]
+// - W2: [FF_hidden_dim x D_model]
+// - b1: [FF_hidden_dim]
+// - b2: [D_model]
+//   Returns: [L x D_model]
+//
+// Currently uses output projection where Z : [L x D_model] is projected back to [L x D_in]
+// Z : [L x D_model] * W_out [D_model x D_in]=> [L x D_in]
 // For Gate sizing need to take encoder output and pass it through a classification head.
 // Each class corresponding to the libcell.
 // --------------------------------------------------------------------
@@ -1282,7 +1301,7 @@ static void eigenLayerNorm(Eigen::MatrixXf& seq, float eps=1e-5f)
 }
 
 // --------------------------------------------------------------------
-// runTransformer: Projects data_array from D_in -> D_model (divisible by H),
+// runTransformerEigen: Projects data_array from D_in -> D_model (divisible by H),
 // runs M encoder layers, then projects back to D_in if desired.
 //
 // data_array: shape [N x L x D_in]
@@ -1294,7 +1313,19 @@ static void eigenLayerNorm(Eigen::MatrixXf& seq, float eps=1e-5f)
 //     Y = LN( X + MultiHeadAttn(X) )
 //     Z = LN( Y + FF(Y) )
 // Return Z
-// 
+//
+// FF is a simple 2-layer feed-forward network: ReLU(x*W1 + b1)*W2 + b2
+// - x: [L x D_model]
+// - W1: [D_model x FF_hidden_dim]
+// - W2: [FF_hidden_dim x D_model]
+// - b1: [FF_hidden_dim]
+// - b2: [D_model]
+//   Returns: [L x D_model]
+//   
+// Uses Eigen for matrix operations.
+//
+// Currently uses output projection where Z : [L x D_model] is projected back to [L x D_in]
+// Z : [L x D_model] * W_out [D_model x D_in]=> [L x D_in]
 // For Gate sizing need to take encoder output and pass it through a classification head.
 // Each class corresponding to the libcell.
 // --------------------------------------------------------------------
