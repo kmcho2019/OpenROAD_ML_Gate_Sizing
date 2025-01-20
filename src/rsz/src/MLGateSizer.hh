@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <tuple>
 #include <iostream>
+#include <chrono>
 
 namespace sta {
 class PathExpanded;
@@ -278,6 +279,20 @@ class MLGateSizer : public sta::dbStaState
   // Naive encoder-like transformer forward pass (initial implementation)
   std::vector<std::vector<std::vector<float>>> runTransformer(
       const std::vector<std::vector<std::vector<float>>>& data_array);
+
+  // Eigen-based version, more efficient
+  std::vector<std::vector<std::vector<float>>> runTransformerEigen(
+      const std::vector<std::vector<std::vector<float>>>& data_array);
+
+  // Compare two transformer outputs for correctness
+  bool compareOutputs(
+      const std::vector<std::vector<std::vector<float>>>& A,
+      const std::vector<std::vector<std::vector<float>>>& B,
+      float tol = 1e-4f) const;
+
+  // Simple timing utility that returns elapsed microseconds
+  template <class Func>
+  long long benchmark(Func&& func);
 
   void loadWeights(const std::string& weight_file);
   void addToken(const std::vector<float>& pin_data, const std::string& gate_type);
