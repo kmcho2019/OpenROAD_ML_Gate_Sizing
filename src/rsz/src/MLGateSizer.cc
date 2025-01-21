@@ -232,9 +232,20 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       libcell_to_type_embedding[type_id] = embedding;
     }
 
+
+    // Print the current tech_name
+    //std::string tech_name = db->getTech()->getName();
+    //std::cout << "Tech Name: " << tech_name << std::endl;
     // Print number of libcells and libcell types
     std::cout << "Total Libcells: " << libcell_to_id_.size() << std::endl;
-    std::cout << "Total Libcell Types: " << libcell_to_type_id.size() << std::endl;
+    std::cout << "Total Libcell Types: " << libcell_type_id_to_libcell_id.size() << std::endl;
+
+    std::cout << "All Libcell Names: " << std::endl;
+    for (size_t i = 0; i < ordered_libcells_.size(); i++) {
+      std::cout << ordered_libcells_[i] << std::endl;
+    }
+
+    std::cout << std::endl;
 
     // Print Type ID from 0, 1, 2, ... then print the libcell names and IDs associated with the type ID
     int total_types = libcell_type_id_to_libcell_id.size();
@@ -253,11 +264,23 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
     // Attempt to load libcell embeddings from a binary file
     size_t embedding_size = 768; // Embedding size of deberta-v3-base model
-    loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/libcell_embeddings.bin", embedding_size);
+
+    // Load the embeddings based on the number of libcells
+    // Currently supports ASAP7 and Nangate45 temporary fix needs to be more robust and general
+    if (libcell_to_id_.size() == 216) { // ASAP7
+      loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/ASAP7_libcell_embeddings.bin", embedding_size);
+    }
+    else if (libcell_to_id_.size() == 135) {  // Nangate45
+      loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/nangate45_libcell_embeddings.bin", embedding_size);
+
+    }
+    else {
+      std::cout << "Unsupported, unable to load embeddings" << std::endl;
+    }
 
     // Print the embeddings for each libcell id first 5 elements
     for (int i = 0; i < 5; i++) {
-      std::cout << "Libcell ID: " << i << "Libcell Name" << ordered_libcells_[i]<< " Embedding: ";
+      std::cout << "Libcell ID: " << i << " Libcell Name: " << ordered_libcells_[i]<< " Embedding: ";
       for (int j = 0; j < 5; j++) {
         std::cout << libcell_id_to_embedding_[i][j] << " ";
       }
