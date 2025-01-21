@@ -27,6 +27,8 @@
 #include "utl/Logger.h"
 
 #include <Eigen/Dense>
+#include <algorithm>
+#include <fstream>
 
 namespace rsz {
 
@@ -120,9 +122,16 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     sta::Corner* corner = sta_->cmdCorner();
 
     // Get Library Cell to index mapping
-    std::unordered_map<std::string, int> libcell_to_id;
+    std::vector<std::string> all_libcell_names; // Initialize them as empty and build them up, used for generating ordered_libcells_
+    std::unordered_map<std::string, int> libcell_to_id_temp;
     std::unordered_map<std::string, int> libcell_to_type_id; // equivalent libcells share the same, Uses EquivCells
+
+    std::unordered_map<int, std::vector<int>> libcell_type_id_to_libcell_id; // Maps libcell type id to libcell id
+    std::unordered_map<int, int> libcell_id_to_libcell_type_id; // Maps libcell id to libcell type id
+
+    std::unordered_map<int, std::vector<float>> libcell_to_embedding;
     std::unordered_map<int, std::vector<float>> libcell_to_type_embedding;
+
     std::unordered_map<std::string, int> pin_name_to_id; // Initialize them as empty and build them up during pin retrieval process
     std::unordered_map<std::string, int> cell_name_to_id; // Initialize them as empty and build them up during pin retrieval process
 
@@ -134,11 +143,26 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     for (odb::dbLib* lib : db->getLibs()) {
       for (odb::dbMaster* master : lib->getMasters()) {
         std::string cell_name = master->getName();
-        if (libcell_to_id.find(cell_name) == libcell_to_id.end()) {
-          libcell_to_id[cell_name] = libcell_id++;
+        if (libcell_to_id_temp.find(cell_name) == libcell_to_id_temp.end()) {
+          libcell_to_id_temp[cell_name] = libcell_id++;
+          all_libcell_names.push_back(cell_name);
         }
       }
     }
+
+    // Use generateLibcellOrdering to generate ordered_libcells_
+    generateLibcellOrdering(all_libcell_names);
+
+    // Assign the id and type id based on the ordered_libcells_
+    // Convetion being that the first cell is assigned id 0
+    // For type id, id increments from 0 for each unique cell type
+    // The ordering is based on the smallest id of the libcells within the type
+    // For example, if NAND2 libcell type has libcell id 0, 1, 2 and AND2 libcell type has libcell id 3, 4, 5
+    // Then the type id for NAND2 is 0 and for AND2 is 1
+
+
+
+
     
     // Initialize libcell_to_type_id 
     // EquivCell part taken from Timing::EquivCells()
@@ -182,6 +206,18 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       }
     }
 
+    // Initialize libcell_type_id_to_libcell_id and libcell_id_to_libcell_type_id based on libcell_to_id_ and libcell_to_type_id
+    for (const auto& cell : libcell_to_id_) {
+      std::string cell_name = cell.first;
+      int cell_id = cell.second;
+      int cell_type_id = libcell_to_type_id[cell_name];
+      libcell_type_id_to_libcell_id[cell_type_id].push_back(cell_id);
+      libcell_id_to_libcell_type_id[cell_id] = cell_type_id;
+    }
+
+
+
+
     // Initialize libcell_to_type_embedding with placeholder values
     // Proper embedding comes from passing through libcell name through a sentence transformer and averaging the values for same libcell type
     for (const auto& type_pair : libcell_to_type_id) {
@@ -196,11 +232,107 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       libcell_to_type_embedding[type_id] = embedding;
     }
 
+    // Print number of libcells and libcell types
+    std::cout << "Total Libcells: " << libcell_to_id_.size() << std::endl;
+    std::cout << "Total Libcell Types: " << libcell_to_type_id.size() << std::endl;
 
-    // Print Cell Names and ID from libcell_to_id and Type ID
-    for (auto& cell : libcell_to_id) {
+    // Print Type ID from 0, 1, 2, ... then print the libcell names and IDs associated with the type ID
+    int total_types = libcell_type_id_to_libcell_id.size();
+    for (int type_id = 0; type_id < total_types; type_id++) {
+      std::cout << "Type ID: " << type_id << std::endl;
+      for (int cell_id : libcell_type_id_to_libcell_id[type_id]) {
+        std::string cell_name = all_libcell_names[cell_id];
+        std::cout << "Cell Name: " << cell_name << " ID: " << libcell_to_id_[cell_name] << std::endl;
+      }
+    }
+
+    // Print Cell Names and ID from libcell_to_id_ and Type ID
+    for (auto& cell : libcell_to_id_) {
       std::cout << "Cell Name: " << cell.first << " ID: " << cell.second << " Type ID: " << libcell_to_type_id[cell.first] << std::endl;
     }
+
+    // Attempt to load libcell embeddings from a binary file
+    size_t embedding_size = 768; // Embedding size of deberta-v3-base model
+    loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/libcell_embeddings.bin", embedding_size);
+
+    // Print the embeddings for each libcell id first 5 elements
+    for (int i = 0; i < 5; i++) {
+      std::cout << "Libcell ID: " << i << "Libcell Name" << ordered_libcells_[i]<< " Embedding: ";
+      for (int j = 0; j < 5; j++) {
+        std::cout << libcell_id_to_embedding_[i][j] << " ";
+      }
+      std::cout << std::endl;
+    }
+
+
+    // Normalization constants for PinMetrics
+    float pin_loc_x_max = 0.0;
+    float pin_loc_x_min = 0.0;
+    float pin_loc_x_mean = 0.0;
+    float pin_loc_x_std = 0.0;
+    float pin_loc_y_max = 0.0;
+    float pin_loc_y_min = 0.0;
+    float pin_loc_y_mean = 0.0;
+    float pin_loc_y_std = 0.0;
+    float p2p_dist_max = 0.0;
+    float p2p_dist_min = 0.0;
+    float p2p_dist_mean = 0.0;
+    float p2p_dist_std = 0.0;
+    float hpwl_max = 0.0;
+    float hpwl_min = 0.0;
+    float hpwl_mean = 0.0;
+    float hpwl_std = 0.0;
+    float input_pin_cap_max = 0.0;
+    float input_pin_cap_min = 0.0;
+    float input_pin_cap_mean = 0.0;
+    float input_pin_cap_std = 0.0;
+    float wire_cap_max = 0.0;
+    float wire_cap_min = 0.0;
+    float wire_cap_mean = 0.0;
+    float wire_cap_std = 0.0;
+    float pin_cap_max = 0.0;
+    float pin_cap_min = 0.0;
+    float pin_cap_mean = 0.0;
+    float pin_cap_std = 0.0;
+    float total_cap_max = 0.0;
+    float total_cap_min = 0.0;
+    float total_cap_mean = 0.0;
+    float total_cap_std = 0.0;
+    float fanout_max = 0.0;
+    float fanout_min = 0.0;
+    float fanout_mean = 0.0;
+    float fanout_std = 0.0;
+    float arc_delay_max = 0.0;
+    float arc_delay_min = 0.0;
+    float arc_delay_mean = 0.0;
+    float arc_delay_std = 0.0;
+    float reachable_endpoints_max = 0.0;
+    float reachable_endpoints_min = 0.0;
+    float reachable_endpoints_mean = 0.0;
+    float reachable_endpoints_std = 0.0;
+    float rise_slew_max = 0.0;
+    float rise_slew_min = 0.0;
+    float rise_slew_mean = 0.0;
+    float rise_slew_std = 0.0;
+    float fall_slew_max = 0.0;
+    float fall_slew_min = 0.0;
+    float fall_slew_mean = 0.0;
+    float fall_slew_std = 0.0;
+    float slack_max = 0.0;
+    float slack_min = 0.0;
+    float slack_mean = 0.0;
+    float slack_std = 0.0;
+    float rise_arrival_time_max = 0.0;
+    float rise_arrival_time_min = 0.0;
+    float rise_arrival_time_mean = 0.0;
+    float rise_arrival_time_std = 0.0;
+    float fall_arrival_time_max = 0.0;
+    float fall_arrival_time_min = 0.0;
+    float fall_arrival_time_mean = 0.0;
+    float fall_arrival_time_std = 0.0;
+
+
+
 
   
 
@@ -656,6 +788,141 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
   // Use PinMetrics and PinDataSequence to store the extracted data
 
+}
+
+
+void MLGateSizer::writeBinaryFile(const std::string& filename, 
+                                 const std::vector<std::vector<std::vector<float>>>& data)
+{
+    std::ofstream out(filename, std::ios::binary);
+    if (!out) {
+        logger_->error(utl::RSZ, 1001, "Cannot open file {} for writing", filename);
+        return;
+    }
+
+    // Write dimensions
+    size_t N = data.size();
+    size_t L = N > 0 ? data[0].size() : 0;
+    size_t D = L > 0 ? data[0][0].size() : 0;
+
+    out.write(reinterpret_cast<const char*>(&N), sizeof(size_t));
+    out.write(reinterpret_cast<const char*>(&L), sizeof(size_t));
+    out.write(reinterpret_cast<const char*>(&D), sizeof(size_t));
+
+    // Write data in flattened format
+    for (const auto& seq : data) {
+        for (const auto& token : seq) {
+            out.write(reinterpret_cast<const char*>(token.data()), D * sizeof(float));
+        }
+    }
+
+    if (!out) {
+        logger_->error(utl::RSZ, 1002, "Error writing to file {}", filename);
+    }
+}
+
+std::vector<std::vector<std::vector<float>>> MLGateSizer::readBinaryFile(const std::string& filename)
+{
+    std::ifstream in(filename, std::ios::binary);
+    if (!in) {
+        logger_->error(utl::RSZ, 1003, "Cannot open file {} for reading", filename);
+        return {};
+    }
+
+    // Read dimensions
+    size_t N, L, D;
+    in.read(reinterpret_cast<char*>(&N), sizeof(size_t));
+    in.read(reinterpret_cast<char*>(&L), sizeof(size_t));
+    in.read(reinterpret_cast<char*>(&D), sizeof(size_t));
+
+    if (!in) {
+        logger_->error(utl::RSZ, 1004, "Error reading dimensions from file {}", filename);
+        return {};
+    }
+
+    // Initialize 3D vector
+    std::vector<std::vector<std::vector<float>>> data(N, 
+        std::vector<std::vector<float>>(L, std::vector<float>(D)));
+
+    // Read data
+    for (auto& seq : data) {
+        for (auto& token : seq) {
+            in.read(reinterpret_cast<char*>(token.data()), D * sizeof(float));
+            if (!in) {
+                logger_->error(utl::RSZ, 1005, "Error reading data from file {}", filename);
+                return {};
+            }
+        }
+    }
+
+    return data;
+}
+
+void MLGateSizer::generateLibcellOrdering(const std::vector<std::string>& libcells)
+{
+    ordered_libcells_ = libcells;
+    std::sort(ordered_libcells_.begin(), ordered_libcells_.end(), LibcellComparator());
+    
+    // Rebuild libcell_to_id map
+    libcell_to_id_.clear();
+    for (size_t i = 0; i < ordered_libcells_.size(); ++i) {
+        libcell_to_id_[ordered_libcells_[i]] = i;
+    }
+}
+
+void MLGateSizer::saveEmbeddingsBinary(const std::string& filename)
+{
+    std::ofstream out(filename, std::ios::binary);
+    if (!out) {
+        logger_->error(utl::RSZ, 3001, "Cannot open embeddings file {}", filename);
+        return;
+    }
+
+    // Write embedding dimensions first
+    const size_t num_items = ordered_libcells_.size();
+    out.write(reinterpret_cast<const char*>(&num_items), sizeof(size_t));
+    out.write(reinterpret_cast<const char*>(&embedding_size_), sizeof(size_t));
+
+    // Write embeddings in alphabetical order
+    for (const auto& libcell : ordered_libcells_) {
+        const auto& emb = libcell_id_to_embedding_[libcell_to_id_[libcell]];
+        out.write(reinterpret_cast<const char*>(emb.data()), emb.size() * sizeof(float));
+    }
+}
+
+void MLGateSizer::loadEmbeddingsBinary(const std::string& filename, size_t embedding_size)
+{
+    std::ifstream in(filename, std::ios::binary);
+    if (!in) {
+        logger_->error(utl::RSZ, 3002, "Cannot open embeddings file {}", filename);
+        return;
+    }
+
+    // Read dimensions
+    size_t num_items, file_embedding_size;
+    in.read(reinterpret_cast<char*>(&num_items), sizeof(size_t));
+    in.read(reinterpret_cast<char*>(&file_embedding_size), sizeof(size_t));
+    
+    if (num_items != ordered_libcells_.size() || file_embedding_size != embedding_size) {
+        logger_->error(utl::RSZ, 3003, 
+            "Embedding file dimensions mismatch. Expected {} items of size {}, got {} items of size {}",
+            ordered_libcells_.size(), embedding_size, num_items, file_embedding_size);
+        return;
+    }
+
+    // Read embeddings in alphabetical order
+    libcell_id_to_embedding_.clear();
+    embedding_size_ = embedding_size;
+    std::vector<float> embedding(embedding_size);
+    
+    for (size_t i = 0; i < num_items; ++i) {
+        in.read(reinterpret_cast<char*>(embedding.data()), embedding_size * sizeof(float));
+        if (!in) {
+            logger_->error(utl::RSZ, 3004, "Error reading embedding {} from file", i);
+            return;
+        }
+        libcell_id_to_embedding_[i] = embedding;
+    }
 }
 
 // ------------------------------------------------------------
