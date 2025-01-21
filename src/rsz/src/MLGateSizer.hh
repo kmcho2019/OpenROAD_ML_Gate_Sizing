@@ -316,6 +316,15 @@ class MLGateSizer : public sta::dbStaState
   void getEndpointAndCriticalPaths();
   // void resizewithML();
 
+  // Binary file handling
+  void writeBinaryFile(const std::string& filename, const std::vector<std::vector<std::vector<float>>>& data);
+  std::vector<std::vector<std::vector<float>>> readBinaryFile(const std::string& filename);
+
+  void generateLibcellOrdering(const std::vector<std::string>& libcells);
+  void saveEmbeddingsBinary(const std::string& filename);
+  void loadEmbeddingsBinary(const std::string& filename, size_t embedding_size);
+  size_t getEmbeddingSize() const { return embedding_size_; }
+
  private:
   void init();
   // void extractWorstPaths();
@@ -330,6 +339,18 @@ class MLGateSizer : public sta::dbStaState
 
   std::vector<std::vector<float>> pin_tokens_;
   std::vector<std::string> gate_types_;
+  std::vector<std::string> ordered_libcells_;
+	std::unordered_map<std::string, int> libcell_to_id_;
+  std::unordered_map<int, std::vector<float>> libcell_id_to_embedding_;
+	std::unordered_map<int, std::vector<float>> libcell_type_id_to_embedding_;
+  size_t embedding_size_ = 0;
+
+	// Case-sensitive alphabetical sort that matches Python's default
+	struct LibcellComparator {
+			bool operator()(const std::string& a, const std::string& b) const {
+					return a < b; // Simple lexicographical comparison
+			}
+	};
   // Eigen::MatrixXf transformer_weights_;
 };
 
