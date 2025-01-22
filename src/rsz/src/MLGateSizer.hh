@@ -323,7 +323,10 @@ class MLGateSizer : public sta::dbStaState
   void generateLibcellOrdering(const std::vector<std::string>& libcells);
   void saveEmbeddingsBinary(const std::string& filename);
   void loadEmbeddingsBinary(const std::string& filename, size_t embedding_size);
-  size_t getEmbeddingSize() const { return embedding_size_; }
+	void updateLibcellTypeMap(const std::unordered_map<std::string, int>& libcell_to_type_id); // update libcell_to_type_id_, libcell_type_id_to_libcell_ids_, and libcell_id_to_libcell_type_id_
+	// Generate libcell type embeddings from libcell embeddings by averaging over all libcells of the same type
+	void updateLibcellTypeEmbeddings(); 
+	size_t getEmbeddingSize() const { return embedding_size_; }
 
  private:
   void init();
@@ -341,17 +344,23 @@ class MLGateSizer : public sta::dbStaState
   std::vector<std::string> gate_types_;
   std::vector<std::string> ordered_libcells_;
 	std::unordered_map<std::string, int> libcell_to_id_;
+	std::unordered_map<std::string, int> libcell_to_type_id_;
+	std::unordered_map<int, std::vector<int>> libcell_type_id_to_libcell_ids_;
+	std::unordered_map<int, std::string> libcell_id_to_libcell_type_id_;
+
   std::unordered_map<int, std::vector<float>> libcell_id_to_embedding_;
 	std::unordered_map<int, std::vector<float>> libcell_type_id_to_embedding_;
   size_t embedding_size_ = 0;
 
 	// Case-sensitive alphabetical sort that matches Python's default
 	struct LibcellComparator {
-			bool operator()(const std::string& a, const std::string& b) const {
-					return a < b; // Simple lexicographical comparison
-			}
+		bool operator()(const std::string& a, const std::string& b) const {
+			return a < b; // Simple lexicographical comparison
+		}
 	};
   // Eigen::MatrixXf transformer_weights_;
+
+
 };
 
 } // namespace rsz

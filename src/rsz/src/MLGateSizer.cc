@@ -122,15 +122,15 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     sta::Corner* corner = sta_->cmdCorner();
 
     // Get Library Cell to index mapping
-    std::vector<std::string> all_libcell_names; // Initialize them as empty and build them up, used for generating ordered_libcells_
+    std::vector<std::string> all_libcell_names_temp; // Initialize them as empty and build them up, used for generating ordered_libcells_
     std::unordered_map<std::string, int> libcell_to_id_temp;
-    std::unordered_map<std::string, int> libcell_to_type_id; // equivalent libcells share the same, Uses EquivCells
+    std::unordered_map<std::string, int> libcell_to_type_id_temp; // equivalent libcells share the same, Uses EquivCells
 
-    std::unordered_map<int, std::vector<int>> libcell_type_id_to_libcell_id; // Maps libcell type id to libcell id
-    std::unordered_map<int, int> libcell_id_to_libcell_type_id; // Maps libcell id to libcell type id
+    //std::unordered_map<int, std::vector<int>> libcell_type_id_to_libcell_id; // Maps libcell type id to libcell id
+    //std::unordered_map<int, int> libcell_id_to_libcell_type_id; // Maps libcell id to libcell type id
 
-    std::unordered_map<int, std::vector<float>> libcell_to_embedding;
-    std::unordered_map<int, std::vector<float>> libcell_to_type_embedding;
+    //std::unordered_map<int, std::vector<float>> libcell_to_embedding;
+    //std::unordered_map<int, std::vector<float>> libcell_to_type_embedding;
 
     std::unordered_map<std::string, int> pin_name_to_id; // Initialize them as empty and build them up during pin retrieval process
     std::unordered_map<std::string, int> cell_name_to_id; // Initialize them as empty and build them up during pin retrieval process
@@ -145,13 +145,13 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         std::string cell_name = master->getName();
         if (libcell_to_id_temp.find(cell_name) == libcell_to_id_temp.end()) {
           libcell_to_id_temp[cell_name] = libcell_id++;
-          all_libcell_names.push_back(cell_name);
+          all_libcell_names_temp.push_back(cell_name);
         }
       }
     }
 
     // Use generateLibcellOrdering to generate ordered_libcells_
-    generateLibcellOrdering(all_libcell_names);
+    generateLibcellOrdering(all_libcell_names_temp);
 
     // Assign the id and type id based on the ordered_libcells_
     // Convetion being that the first cell is assigned id 0
@@ -164,7 +164,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
 
     
-    // Initialize libcell_to_type_id 
+    // Initialize libcell_to_type_id_temp to be used for updateLibcellTypeMap which updates internal data structures regarding libcell types 
     // EquivCell part taken from Timing::EquivCells()
     for (odb::dbLib* lib : db->getLibs()) {
       for (odb::dbMaster* master : lib->getMasters()) {
@@ -188,9 +188,9 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         bool type_id_found = false;
         for (odb::dbMaster* equiv_master : masterSeq) {
           std::string equiv_cell_name = equiv_master->getName();
-          if (libcell_to_type_id.find(equiv_cell_name) != libcell_to_type_id.end()) {
+          if (libcell_to_type_id_temp.find(equiv_cell_name) != libcell_to_type_id_temp.end()) {
             // Found an equivalent cell with an existing type ID, use it
-            libcell_to_type_id[cell_name] = libcell_to_type_id[equiv_cell_name];
+            libcell_to_type_id_temp[cell_name] = libcell_to_type_id_temp[equiv_cell_name];
             type_id_found = true;
             break; // No need to check further
           }
@@ -198,7 +198,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
         // If none of the equivalent cells have a type ID, assign a new one
         if (!type_id_found) {
-          libcell_to_type_id[cell_name] = libcell_type_id++;
+          libcell_to_type_id_temp[cell_name] = libcell_type_id++;
           // Optionally generate and assign embeddings here, e.g.,
           // cell_type_embeddings[libcell_to_type_id[cell_name]] = generateEmbedding(master);
         }
@@ -206,60 +206,38 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       }
     }
 
-    // Initialize libcell_type_id_to_libcell_id and libcell_id_to_libcell_type_id based on libcell_to_id_ and libcell_to_type_id
-    for (const auto& cell : libcell_to_id_) {
-      std::string cell_name = cell.first;
-      int cell_id = cell.second;
-      int cell_type_id = libcell_to_type_id[cell_name];
-      libcell_type_id_to_libcell_id[cell_type_id].push_back(cell_id);
-      libcell_id_to_libcell_type_id[cell_id] = cell_type_id;
-    }
-
-
-
-
-    // Initialize libcell_to_type_embedding with placeholder values
-    // Proper embedding comes from passing through libcell name through a sentence transformer and averaging the values for same libcell type
-    for (const auto& type_pair : libcell_to_type_id) {
-      int type_id = type_pair.second;
-
-      // Create a 16-float embedding filled with 0.0, 1.0, 2.0, ...
-      std::vector<float> embedding(16);
-      for (int i = 0; i < embedding.size(); ++i) {
-        embedding[i] = static_cast<float>(type_id); // Assign the type_id as the value for all elements in the embedding
-      }
-
-      libcell_to_type_embedding[type_id] = embedding;
-    }
-
+    // Initialize libcell_to_type_id_, libcell_type_id_to_libcell_ids_ and libcell_id_to_libcell_type_id_ based on libcell_to_id_ and libcell_to_type_id_temp
+    updateLibcellTypeMap(libcell_to_type_id_temp);
 
     // Print the current tech_name
     //std::string tech_name = db->getTech()->getName();
     //std::cout << "Tech Name: " << tech_name << std::endl;
     // Print number of libcells and libcell types
     std::cout << "Total Libcells: " << libcell_to_id_.size() << std::endl;
-    std::cout << "Total Libcell Types: " << libcell_type_id_to_libcell_id.size() << std::endl;
+    std::cout << "Total Libcell Types: " << libcell_type_id_to_libcell_ids_.size() << std::endl;
 
     std::cout << "All Libcell Names: " << std::endl;
-    for (size_t i = 0; i < ordered_libcells_.size(); i++) {
-      std::cout << ordered_libcells_[i] << std::endl;
+    for (const auto& cell : ordered_libcells_) {
+      std::cout << cell << std::endl;
     }
 
     std::cout << std::endl;
 
     // Print Type ID from 0, 1, 2, ... then print the libcell names and IDs associated with the type ID
-    int total_types = libcell_type_id_to_libcell_id.size();
-    for (int type_id = 0; type_id < total_types; type_id++) {
+    for (auto& type_pair : libcell_type_id_to_libcell_ids_) {
+      int type_id = type_pair.first;
       std::cout << "Type ID: " << type_id << std::endl;
-      for (int cell_id : libcell_type_id_to_libcell_id[type_id]) {
-        std::string cell_name = all_libcell_names[cell_id];
+      for (int cell_id : type_pair.second) {
+        std::string cell_name = ordered_libcells_[cell_id];
         std::cout << "Cell Name: " << cell_name << " ID: " << libcell_to_id_[cell_name] << std::endl;
       }
     }
 
+    std::cout << std::endl;
+
     // Print Cell Names and ID from libcell_to_id_ and Type ID
     for (auto& cell : libcell_to_id_) {
-      std::cout << "Cell Name: " << cell.first << " ID: " << cell.second << " Type ID: " << libcell_to_type_id[cell.first] << std::endl;
+      std::cout << "Cell Name: " << cell.first << " ID: " << cell.second << " Type ID: " << libcell_to_type_id_[cell.first] << std::endl;
     }
 
     // Attempt to load libcell embeddings from a binary file
@@ -269,13 +247,34 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     // Currently supports ASAP7 and Nangate45 temporary fix needs to be more robust and general
     if (libcell_to_id_.size() == 216) { // ASAP7
       loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/ASAP7_libcell_embeddings.bin", embedding_size);
-    }
+      updateLibcellTypeEmbeddings();
+  }
     else if (libcell_to_id_.size() == 135) {  // Nangate45
       loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/nangate45_libcell_embeddings.bin", embedding_size);
-
+      updateLibcellTypeEmbeddings();
     }
     else {
       std::cout << "Unsupported, unable to load embeddings" << std::endl;
+
+      std::cout << "Generate placeholder embeddings" << std::endl;
+      libcell_id_to_embedding_.clear();
+      embedding_size_ = embedding_size;
+      // Initialize libcell_to_embeddings with placeholder values
+      // Proper embedding comes from passing through libcell name through a sentence transformer and averaging the values for same libcell type
+      for (const auto& type_pair : libcell_to_id_) {
+        int libcell_id = type_pair.second;
+
+        // Create a 16-float embedding filled with 0.0, 1.0, 2.0, ...
+        std::vector<float> embedding(embedding_size);
+        for (int i = 0; i < embedding.size(); ++i) {
+          embedding[i] = static_cast<float>(libcell_id); // Assign the libcell_id as the value for all elements in the embedding
+        }
+
+        libcell_id_to_embedding_[libcell_id] = embedding;
+      }
+
+      updateLibcellTypeEmbeddings();
+
     }
 
     // Print the embeddings for each libcell id first 5 elements
@@ -665,8 +664,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     auto builder = SequenceArrayBuilder(collector.getSequences(),
                                       pin_name_to_id,
                                       cell_name_to_id,
-                                      libcell_to_type_id,
-                                      libcell_to_type_embedding);
+                                      libcell_to_type_id_,
+                                      libcell_type_id_to_embedding_);
 
     auto [data_array, pin_ids, cell_ids, cell_type_ids] = builder.build();
 
@@ -893,6 +892,24 @@ void MLGateSizer::generateLibcellOrdering(const std::vector<std::string>& libcel
     }
 }
 
+ // update libcell_to_type_id_, libcell_type_id_to_libcell_ids_, and libcell_id_to_libcell_type_id_
+void MLGateSizer::updateLibcellTypeMap(const std::unordered_map<std::string, int>& libcell_to_type_id)
+{
+    libcell_to_type_id_ = libcell_to_type_id;
+    libcell_type_id_to_libcell_ids_.clear();
+    libcell_id_to_libcell_type_id_.clear();
+
+	for (const auto& libcell : libcell_to_type_id_) {
+		std::string libcell_name = libcell.first;
+		int libcell_id = libcell.second;
+		int libcell_type_id = libcell_to_type_id_[libcell_name];
+		libcell_type_id_to_libcell_ids_[libcell_type_id].push_back(libcell_id);
+		libcell_id_to_libcell_type_id_[libcell_id] = libcell_type_id;
+	}
+
+}
+
+
 void MLGateSizer::saveEmbeddingsBinary(const std::string& filename)
 {
     std::ofstream out(filename, std::ios::binary);
@@ -946,6 +963,27 @@ void MLGateSizer::loadEmbeddingsBinary(const std::string& filename, size_t embed
         }
         libcell_id_to_embedding_[i] = embedding;
     }
+}
+
+// Generate libcell type embeddings from libcell embeddings by averaging over all libcells of the same type
+void MLGateSizer::updateLibcellTypeEmbeddings()
+{
+	libcell_type_id_to_embedding_.clear();
+	for (const auto& libcell_type : libcell_type_id_to_libcell_ids_) {
+		int libcell_type_id = libcell_type.first;
+		const auto& libcell_ids = libcell_type.second;
+		std::vector<float> embedding(embedding_size_, 0.0f);
+		for (const auto& libcell_id : libcell_ids) {
+			const auto& libcell_emb = libcell_id_to_embedding_[libcell_id];
+			for (size_t i = 0; i < embedding_size_; ++i) {
+				embedding[i] += libcell_emb[i];
+			}
+		}
+		for (size_t i = 0; i < embedding_size_; ++i) {
+			embedding[i] /= libcell_ids.size();
+		}
+		libcell_type_id_to_embedding_[libcell_type_id] = embedding;
+	}
 }
 
 // ------------------------------------------------------------
