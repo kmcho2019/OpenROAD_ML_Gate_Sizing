@@ -735,21 +735,42 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     int num_heads = 8;//4;
     size_t N = data_array.size(); // Number of sequences (100)
     size_t L = data_array[0].size();  // Max sequence length (78)
+    // check if L is even or not, assert if not with error L must be even
+    assert(L % 2 == 0 && "L must be even");
+    size_t L_2 = L/2;  // Half of the sequence length, corresponds to the 2nd encoder layer input sequence length
     size_t D_in = data_array[0][0].size();  // Input feature dimensions (17)
+    size_t D_emb = embedding_size_; // Embedding dimensions (768)
     size_t D_model = 128;//64; // Transformer model hidden dimensions (64)
     size_t FF_hidden_dim = 4 * D_model; // Feedforward hidden dimensions (256)
     int num_encoder_layers = 6;//2;
+    int num_encoder_layers_2 = 2; // Number of encoder layers for the 2nd encoder layer
 
     // Calculate the number of parameters in the model
     // Initial Projection weights: (D_in x D_model)
     // Transformer Encoder layers: num_encoder_layers
     // - Q, K, V, O weights: (D_model x D_model) x 4
     // - FF weights: (D_model x FF_hidden_dim) x 2 + FF_hidden_dim + D_model
-    // Final Output Projection weights: (D_model x D_in)
-    size_t model_params = ((D_model * D_model) * 4 + (D_model * FF_hidden_dim) * 2 + FF_hidden_dim + D_model) * num_encoder_layers + (D_in * D_model) * 2;
+    // Projection for the 2nd encoder layer: (D_emb x D_model)
+    // Final Output Projection weights: (D_model x D_in) (optional consider switching to classification head, in that case D_in becomes the number of classes)
+    size_t model_params = ((D_model * D_model) * 4 + (D_model * FF_hidden_dim) * 2 + FF_hidden_dim + D_model) * (num_encoder_layers + num_encoder_layers_2) + (D_in * D_model) * 2 + D_emb * D_model;
 
-    auto outputs = runTransformer(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);  // Run the transformer model
-    auto eigen_outputs = runTransformerEigen(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);  // Run the transformer model using Eigen
+    // encoder_2_input input to 2nd encoder layer shape: (N, L/2, D_emb)
+    // consists of the embeddings of the libcell type IDs
+    // from every other libcell type ID in the libcell_type_ids use the corresponding embedding from libcell_type_id_to_embedding_
+    std::vector<std::vector<std::vector<float>>> encoder_2_input;
+    encoder_2_input = std::vector<std::vector<std::vector<float>>>(N, std::vector<std::vector<float>>(L/2, std::vector<float>(embedding_size_, 0.0)));
+    for (size_t i = 0; i < N; i++) {
+      for (size_t j = 0; j < L/2; j++) {
+        int libcell_type_id = libcell_type_ids[i][j*2];
+        // only perform lookup if the libcell type id is valid
+        if (libcell_type_id >= 0 && libcell_type_id < libcell_type_id_to_embedding_.size()) {
+          encoder_2_input[i][j] = libcell_type_id_to_embedding_[libcell_type_id];
+        }
+      }
+    }
+    
+    //auto outputs = runTransformer(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);  // Run the transformer model
+    //auto eigen_outputs = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);  // Run the transformer model using Eigen
 
     // Debugging print statements to check outputs
     /*
@@ -764,11 +785,11 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     */
     // 3) Actually store the outputs to compare correctness
     auto start = std::chrono::steady_clock::now();
-    auto out_naive  = runTransformer(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);
+    auto out_naive  = runTransformer(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);
     auto end = std::chrono::steady_clock::now();
     auto naive_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     start = std::chrono::steady_clock::now();
-    auto out_eigen  = runTransformerEigen(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);
+    auto out_eigen  = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);
     end = std::chrono::steady_clock::now();
     auto eigen_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     bool ok = compareOutputs(out_naive, out_eigen, 1e-3f);
@@ -780,6 +801,10 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     std::cout << "Model parameters: " << model_params << std::endl;
 
     std::cout << "Total tokens: " << total_tokens << ": " << data_array.size() << "X" << data_array[0].size() << std::endl;
+
+    std::cout << "1st Encoder Input shape: (" << data_array.size() << ", " << data_array[0].size() << ", " << data_array[0][0].size() << ")" << std::endl;
+    std::cout << "2nd Encoder Input shape: (" << encoder_2_input.size() << ", " << encoder_2_input[0].size() << ", " << encoder_2_input[0][0].size() << ")" << std::endl;
+    std::cout << "Output shape: (" << out_naive.size() << ", " << out_naive[0].size() << ", " << out_naive[0][0].size() << ")" << std::endl;
 
     std::cout << "NAIVE  time: " << naive_us << " us   => "
               << (1e6 * double(total_tokens) / double(naive_us))
@@ -1199,6 +1224,39 @@ static void layerNorm(std::vector<std::vector<float>>& seq, float eps = 1e-5f)
   }
 }
 
+static void applyRoPE(std::vector<std::vector<float>>& Q_or_K, float base = 10000.0f) {
+    // Q_or_K has shape [L x Dh]. We rotate pairs: (0,1), (2,3), ...
+    const int L = Q_or_K.size();
+    if (L == 0) return;
+    
+    const int Dh = Q_or_K[0].size();
+    assert(Dh % 2 == 0 && "Dimension Dh must be even for RoPE");
+    const int half = Dh / 2;
+
+    for (int i = 0; i < L; i++) {
+        const float pos = static_cast<float>(i);
+        std::vector<float>& row = Q_or_K[i];
+        
+        for (int j = 0; j < half; j++) {
+            const float theta = std::pow(base, -2.0f * j / static_cast<float>(Dh));
+            const float angle = pos * theta;
+            
+            const float cos_theta = std::cos(angle);
+            const float sin_theta = std::sin(angle);
+            
+            const int idx0 = 2 * j;
+            const int idx1 = 2 * j + 1;
+            
+            const float x0 = row[idx0];
+            const float x1 = row[idx1];
+            
+            // Apply rotation
+            row[idx0] = x0 * cos_theta - x1 * sin_theta;
+            row[idx1] = x1 * cos_theta + x0 * sin_theta;
+        }
+    }
+}
+
 // ------------------------------------------------------------
 // Helper function: naive multi-head self-attention for one sequence
 // We'll do a single pass of multi-head attention for a shape [L x D].
@@ -1283,6 +1341,12 @@ static std::vector<std::vector<float>> multiHeadSelfAttention(
   auto K3 = to3D(K);
   auto V3 = to3D(V);
 
+  // Apply RoPE to each head's Q and K for positional encoding
+  for (size_t h = 0; h <static_cast<size_t> (num_heads); h++) {
+    applyRoPE(Q3[h]);
+    applyRoPE(K3[h]);
+  }
+
   // 4) Self-attention per head
   // outHead[h] shape [L x Dh]
   auto softmax = [&](std::vector<float>& logits) {
@@ -1347,6 +1411,108 @@ static std::vector<std::vector<float>> multiHeadSelfAttention(
   auto finalOut = matMul(outSeq, Wo);
 
   return finalOut;
+}
+
+// ------------------------------------------------------------
+// Helper function: naive multi-head cross-attention for one sequence
+// We'll do a single pass of multi-head cross-attention for a shape [LQ x D].
+// Q_seq: [LQ x D]
+// M_seq: [LM x D] (sequence from 1st encoder used for K, V)
+// Heads: H
+// We split D into H heads each of size Dh = D/H.
+// For simplicity, we do random Wq, Wk, Wv. Real code would load from TransSizer.
+// Model loading has not been implemented yet.
+// We do the standard formula: softmax(Q*K^T / sqrt(Dh)) * V
+// Then we re-concatenate the heads
+// ------------------------------------------------------------
+static std::vector<std::vector<float>> multiHeadCrossAttention(
+    const std::vector<std::vector<float>>& Q_seq,
+    const std::vector<std::vector<float>>& M_seq,
+    int num_heads,
+    size_t D,
+    size_t LQ,
+    size_t LM,
+    std::vector<std::vector<float>>& Wq,
+    std::vector<std::vector<float>>& Wk,
+    std::vector<std::vector<float>>& Wv,
+    std::vector<std::vector<float>>& Wo)
+{
+    // Check dimensions
+    assert(D % num_heads == 0 && "D must be divisible by num_heads");
+    size_t Dh = D / num_heads;
+
+    // Project Q, K, V
+    auto Q = matMul(Q_seq, Wq); // [LQ x D]
+    auto K = matMul(M_seq, Wk); // [LM x D]
+    auto V = matMul(M_seq, Wv); // [LM x D]
+
+    // Split into heads for Q, K, V
+    auto to3D = [&](const std::vector<std::vector<float>>& X, size_t L) {
+        std::vector<std::vector<std::vector<float>>> X3(
+            num_heads, std::vector<std::vector<float>>(L, std::vector<float>(Dh, 0.0f)));
+        for (size_t l = 0; l < L; l++) {
+            for (size_t h = 0; h < (size_t)num_heads; h++) {
+                for (size_t d = 0; d < Dh; d++) {
+                    X3[h][l][d] = X[l][h * Dh + d];
+                }
+            }
+        }
+        return X3;
+    };
+
+    auto Q3 = to3D(Q, LQ);
+    auto K3 = to3D(K, LM);
+    auto V3 = to3D(V, LM);
+
+    // Compute attention per head
+    auto softmax = [&](std::vector<float>& logits) {
+        float max_val = *std::max_element(logits.begin(), logits.end());
+        float sum = 0.0f;
+        for (auto& v : logits) {
+            v = std::exp(v - max_val);
+            sum += v;
+        }
+        for (auto& v : logits) {
+            v /= sum;
+        }
+    };
+
+    std::vector<std::vector<std::vector<float>>> outHeads(
+        num_heads, std::vector<std::vector<float>>(LQ, std::vector<float>(Dh, 0.0f)));
+
+    for (size_t h = 0; h < (size_t)num_heads; h++) {
+        for (size_t lq = 0; lq < LQ; lq++) {
+            std::vector<float> attn_logits(LM, 0.0f);
+            for (size_t lm = 0; lm < LM; lm++) {
+                float dot_val = 0.0f;
+                for (size_t d = 0; d < Dh; d++) {
+                    dot_val += Q3[h][lq][d] * K3[h][lm][d];
+                }
+                attn_logits[lm] = dot_val / std::sqrt((float)Dh);
+            }
+            softmax(attn_logits);
+
+            for (size_t lm = 0; lm < LM; lm++) {
+                for (size_t d = 0; d < Dh; d++) {
+                    outHeads[h][lq][d] += attn_logits[lm] * V3[h][lm][d];
+                }
+            }
+        }
+    }
+
+    // Concatenate heads
+    std::vector<std::vector<float>> outSeq(LQ, std::vector<float>(D, 0.0f));
+    for (size_t l_ = 0; l_ < LQ; l_++) {
+        for (size_t h_ = 0; h_ < (size_t)num_heads; h_++) {
+            for (size_t d_ = 0; d_ < Dh; d_++) {
+                outSeq[l_][h_ * Dh + d_] = outHeads[h_][l_][d_];
+            }
+        }
+    }
+
+    // Output projection
+    auto finalOut = matMul(outSeq, Wo);
+    return finalOut;
 }
 
 
@@ -1451,20 +1617,24 @@ static std::vector<std::vector<float>> feedForward(
 // Each class corresponding to the libcell.
 // --------------------------------------------------------------------
 std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
-    const std::vector<std::vector<std::vector<float>>>& data_array,
+    const std::vector<std::vector<std::vector<float>>>& data_array_1,
+    const std::vector<std::vector<std::vector<float>>>& data_array_2,
     int num_heads,
     size_t N,
     size_t L,
     size_t D_in,
+    size_t D_emb,
     size_t D_model,
     size_t FF_hidden_dim,
-    int num_encoder_layers)
+    int num_encoder_layers,
+    int num_encoder_layers_2)
 {
-  //size_t N = data_array.size();
-  if (N == 0) return {};
 
-  //size_t L = data_array[0].size();
-  if (L == 0) return {};
+  size_t L2 = L / 2;
+
+  if (N == 0 || L == 0 || data_array_1[0].size() != L || data_array_2[0].size() != L2) {
+      return {};
+  }
 
   // Original input dimension
   //size_t D_in = data_array[0][0].size();
@@ -1503,6 +1673,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
   // If you want to map back to D_in:
   // W_out: [D_model x D_in]
   auto W_in  = randomMatrix(D_in, D_model);
+  auto W_in2 = randomMatrix(D_emb, D_model);
   auto W_out = randomMatrix(D_model, D_in);
 
   // Allocate Q, K, V, O projection matrices
@@ -1523,12 +1694,12 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
 
   // Allocate output
   std::vector<std::vector<std::vector<float>>> output(N,
-      std::vector<std::vector<float>>(L, std::vector<float>(D_in, 0.f)));
+      std::vector<std::vector<float>>(L2, std::vector<float>(D_in, 0.f)));
 
   // For each sequence in the batch:
   for (size_t n = 0; n < N; n++) {
     // current seq: [L x D_in]
-    std::vector<std::vector<float>> seq = data_array[n];
+    std::vector<std::vector<float>> seq = data_array_1[n];
 
     // 1) Project seq => [L x D_model]
     auto seq_proj = matMul(seq, W_in);
@@ -1562,16 +1733,82 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
       x = ff_out;
     }
 
-    // x is now [L x D_model]. Project back to [L x D_in]
-    auto final_out = matMul(x, W_out);
+    // Process data_array_2 through cross-attention layers
+    const std::vector<std::vector<float>>& seq2 = data_array_2[n];
+    std::vector<std::vector<float>> seq_proj2 = matMul(seq2, W_in2); // shape [L2 x D_model]
+    std::vector<std::vector<float>> x2 = seq_proj2; // shape [L2 x D_model]
+
+    for (int layer_2 = 0; layer_2 < num_encoder_layers_2; layer_2++) {
+        auto attn_out2 = multiHeadCrossAttention(x2, x, num_heads, D_model, L2, L, Wq, Wk, Wv, Wo);
+
+        // Residual and LayerNorm
+        for (size_t l = 0; l < L2; l++) {
+            for (size_t d = 0; d < D_model; d++) {
+                attn_out2[l][d] += x2[l][d];
+            }
+        }
+        layerNorm(attn_out2);
+
+        auto ff_out2 = feedForward(attn_out2, L2, D_model, FF_hidden_dim, FF_W1, FF_W2, FF_b1, FF_b2);
+
+        for (size_t l = 0; l < L2; l++) {
+            for (size_t d = 0; d < D_model; d++) {
+                ff_out2[l][d] += attn_out2[l][d];
+            }
+        }
+        layerNorm(ff_out2);
+        x2 = ff_out2;
+    }
+
+    // x2 is now [L/2 x D_model]. Project back to [L/2 x D_in]
+    auto final_out = matMul(x2, W_out);
 
     // Store final_out in output[n]
-    output[n] = final_out; // shape [L x D_in]
+    output[n] = final_out; // shape [L/2 x D_in]
   }
 
-  // Return shape: [N x L x D_in]
+  // Return shape: [N x L/2 x D_in]
   return output;
 }
+
+static void applyRoPEEigen(Eigen::MatrixXf & Q_or_K, float base = 10000.0f)
+{
+    // Q_or_K has shape [L x Dh].  We rotate pairs: (0,1), (2,3), ...
+    int L = Q_or_K.rows();
+    int Dh = Q_or_K.cols();
+
+    // For each position i in [0..L-1]:
+    for (int i = 0; i < L; i++) {
+        float pos = float(i);  // position index
+        // For each pair j in [0..Dh/2-1]:
+        int half = Dh / 2;  // must be even dimension for pairs
+        for (int j = 0; j < half; j++) {
+            // 2*j and 2*j+1 form a pair
+            float x0 = Q_or_K(i, 2*j);
+            float x1 = Q_or_K(i, 2*j+1);
+
+            // Compute angle = pos * theta, where:
+            //   theta = base^(-2*j / float(Dh))
+            // This is a typical RoPE frequency progression.
+            float theta = std::pow(base, -2.0f * j / float(Dh));
+            float angle = pos * theta;
+
+            float c = std::cos(angle);
+            float s = std::sin(angle);
+
+            // Apply 2D rotation:
+            //   x0' =  x0 * cos(angle) - x1 * sin(angle)
+            //   x1' =  x1 * cos(angle) + x0 * sin(angle)
+            float rx0 = x0 * c - x1 * s;
+            float rx1 = x1 * c + x0 * s;
+
+            // Store back
+            Q_or_K(i, 2*j)   = rx0;
+            Q_or_K(i, 2*j+1) = rx1;
+        }
+    }
+}
+
 
 static Eigen::MatrixXf eigenSelfAttention(
   const Eigen::MatrixXf& seq, 
@@ -1639,6 +1876,10 @@ static Eigen::MatrixXf eigenSelfAttention(
         Vsplit[h](l_,d_) = V(l_,h*Dh+d_);
       }
     }
+
+    // Apply RoPE to Qsplit[h] and Ksplit[h] for position encoding
+    applyRoPEEigen(Qsplit[h]); // shape [L x Dh] modified in place
+    applyRoPEEigen(Ksplit[h]); // shape [L x Dh] modified in place
   }
 
   // Accumulate per-head outputs (each [L x Dh]) into outHeads
@@ -1697,6 +1938,99 @@ static Eigen::MatrixXf eigenSelfAttention(
 
   return finalOut;
 }
+
+static Eigen::MatrixXf eigenCrossAttention(
+    const Eigen::MatrixXf & Qseq, // shape [LQ x D]
+    const Eigen::MatrixXf & Mseq, // shape [LM x D] used for K,V
+    int num_heads,
+    size_t D,
+    size_t LQ,
+    size_t LM,
+    Eigen::MatrixXf & Wq,
+    Eigen::MatrixXf & Wk,
+    Eigen::MatrixXf & Wv,
+    Eigen::MatrixXf & Wo)
+{
+    // 1) Project Q from Qseq, K and V from Mseq:
+    //    Qseq: [LQ x D], Mseq: [LM x D]
+    //    Wq, Wk, Wv: [D x D]
+    Eigen::MatrixXf Q = Qseq * Wq; // [LQ x D]
+    Eigen::MatrixXf K = Mseq * Wk; // [LM x D]
+    Eigen::MatrixXf V = Mseq * Wv; // [LM x D]
+
+    // 2) Split into heads.  Let Dh = D / num_heads.
+    //    We gather them into Qsplit[h] shape [LQ x Dh], Ksplit[h] shape [LM x Dh], etc.
+    size_t Dh = D / num_heads;
+    std::vector<Eigen::MatrixXf> Qsplit(num_heads), Ksplit(num_heads), Vsplit(num_heads);
+    for (int h = 0; h < num_heads; h++)
+    {
+        Qsplit[h].resize(LQ, Dh);
+        Ksplit[h].resize(LM, Dh);
+        Vsplit[h].resize(LM, Dh);
+
+        for (int lq = 0; lq < (int)LQ; lq++) {
+            for (int d_ = 0; d_ < (int)Dh; d_++) {
+                Qsplit[h](lq, d_) = Q(lq, h*Dh + d_);
+            }
+        }
+        for (int lm = 0; lm < (int)LM; lm++) {
+            for (int d_ = 0; d_ < (int)Dh; d_++) {
+                Ksplit[h](lm, d_) = K(lm, h*Dh + d_);
+                Vsplit[h](lm, d_) = V(lm, h*Dh + d_);
+            }
+        }
+
+        // (Optional) If we RoPE for cross‐attention as well,
+        // you can apply it to Qsplit[h] and Ksplit[h] here.
+        // Undecided if this is necessary for cross-attention.
+        // applyRoPE(Qsplit[h]);
+        // applyRoPE(Ksplit[h]);
+    }
+
+    // 3) Perform attention for each head
+    auto softmax = [&](Eigen::VectorXf & logits) {
+        float max_val = logits.maxCoeff();
+        logits = (logits.array() - max_val).exp();
+        float sum_ = logits.sum();
+        logits /= sum_;
+        return logits;
+    };
+
+    std::vector<Eigen::MatrixXf> outHeads(num_heads, Eigen::MatrixXf::Zero(LQ, Dh));
+    for (int h = 0; h < num_heads; h++)
+    {
+        for (int lq = 0; lq < (int)LQ; lq++) {
+            // Dot Q[lq] with each K[lm]
+            Eigen::VectorXf attn_logits(LM);
+            for (int lm = 0; lm < (int)LM; lm++) {
+                float dot_val = Qsplit[h].row(lq).dot(Ksplit[h].row(lm));
+                attn_logits(lm) = dot_val / std::sqrt((float)Dh);
+            }
+            // Softmax
+            softmax(attn_logits);
+
+            // Weighted sum of V
+            for (int lm = 0; lm < (int)LM; lm++) {
+                outHeads[h].row(lq).noalias() += attn_logits(lm) * Vsplit[h].row(lm);
+            }
+        }
+    }
+
+    // 4) Concatenate heads => [LQ x D]
+    Eigen::MatrixXf out(LQ, D);
+    for (int lq = 0; lq < (int)LQ; lq++) {
+        for (int h = 0; h < num_heads; h++) {
+            for (int d_ = 0; d_ < (int)Dh; d_++) {
+                out(lq, h*Dh + d_) = outHeads[h](lq, d_);
+            }
+        }
+    }
+
+    // 5) Apply final projection Wo => [D x D]
+    Eigen::MatrixXf finalOut = out * Wo; // shape [LQ x D]
+    return finalOut;
+}
+
 
 static Eigen::MatrixXf eigenFF(
   const Eigen::MatrixXf& seq,
@@ -1779,7 +2113,7 @@ static void eigenLayerNorm(Eigen::MatrixXf& seq, float eps=1e-5f)
 // runTransformerEigen: Projects data_array from D_in -> D_model (divisible by H),
 // runs M encoder layers, then projects back to D_in if desired.
 //
-// data_array: shape [N x L x D_in]
+// data_array_1: shape [N x L x D_in]
 // returns shape [N x L x D_in] if we do the final projection back
 //
 // Main "encoder" demonstration (one or more layers).
@@ -1797,6 +2131,12 @@ static void eigenLayerNorm(Eigen::MatrixXf& seq, float eps=1e-5f)
 // - b2: [D_model]
 //   Returns: [L x D_model]
 //   
+// RoPE is applied to Q/K in self-attention.
+// 
+// Also implement encoder-encoder architecture where the 2nd sequence consisting of libcell types are given.
+// data_array_2: shape [N x L2 x D_emb], L2 is the length of the libcell sequence, L2 = L / 2.
+// As L is the pin sequence length, L2 is the number of libcells which have a 2:1 ratio.
+// The encoder output from data_array_1
 // Uses Eigen for matrix operations.
 //
 // Currently uses output projection where Z : [L x D_model] is projected back to [L x D_in]
@@ -1805,23 +2145,28 @@ static void eigenLayerNorm(Eigen::MatrixXf& seq, float eps=1e-5f)
 // Each class corresponding to the libcell.
 // --------------------------------------------------------------------
 std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
-    const std::vector<std::vector<std::vector<float>>>& data_array,
+    const std::vector<std::vector<std::vector<float>>>& data_array_1, // shape [N x L   x D_in]
+    const std::vector<std::vector<std::vector<float>>>& data_array_2, // shape [N x L/2 x D_emb]
     int num_heads,
     size_t N,
     size_t L,
     size_t D_in,
+    size_t D_emb,
     size_t D_model,
     size_t FF_hidden_dim,
-    int num_encoder_layers)
+    int num_encoder_layers,
+    int num_encoder_layers_2)
 {
-  //size_t N = data_array.size();
+  //size_t N = data_array_1.size();
   if (N == 0) return {};
 
-  //size_t L = data_array[0].size();
+  //size_t L = data_array_1[0].size();
   if (L == 0) return {};
 
+  size_t L2 = L / 2;
+
   // Original input dimension
-  //size_t D_in = data_array[0][0].size();
+  //size_t D_in = data_array_1[0][0].size();
 
   // Decide how many heads we want
   //const int num_heads = 4;
@@ -1857,6 +2202,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
   // If you want to map back to D_in:
   // W_out: [D_model x D_in]
   auto W_in  = randomMatrix(D_in, D_model);
+  auto W_in2 = randomMatrix(D_emb, D_model);
   auto W_out = randomMatrix(D_model, D_in);
 
   // Allocate Q, K, V, O projection matrices
@@ -1879,7 +2225,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
 
   // Allocate output
   std::vector<std::vector<std::vector<float>>> output(N,
-      std::vector<std::vector<float>>(L, std::vector<float>(D_in, 0.f)));
+      std::vector<std::vector<float>>(L2, std::vector<float>(D_in, 0.f)));
   
   
   // For each sequence in the batch:
@@ -1888,10 +2234,11 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
     Eigen::MatrixXf seq(L, D_in);
     for (size_t l = 0; l < L; l++) {
       for (size_t d = 0; d < D_in; d++) {
-        seq(l, d) = data_array[n][l][d];
+        seq(l, d) = data_array_1[n][l][d];
       }
     }
 
+    // First encoder: self-attention
     // 1) Project seq => [L x D_model]
     Eigen::MatrixXf seq_proj = seq * W_in;
 
@@ -1913,11 +2260,41 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
       eigenLayerNorm(x);
     }
 
-    // x is now [L x D_model]. Project back to [L x D_in]
-    Eigen::MatrixXf final_out = x * W_out;
+    // Second encoder: cross-attention
+    // 1) Project seq => [L/2 x D_model]
+    Eigen::MatrixXf seq_proj2(L2, D_emb);
+    for (size_t l = 0; l < L2; l++) {
+      for (size_t d = 0; d < D_emb; d++) {
+        seq_proj2(l, d) = data_array_2[n][l][d];
+      }
+    }
+
+    // [L/2 x D_emb] x [D_emb x D_model] => [L/2 x D_model]
+    Eigen::MatrixXf x2 = seq_proj2 * W_in2;
+    for (int layer_2 = 0; layer_2 < num_encoder_layers_2; layer_2++) {
+      // (a) Multi-head cross-attention
+      auto attn_out2 = eigenCrossAttention(x2, x, num_heads, D_model, L2, L, Wq, Wk, Wv, Wo);
+      // (b) Residual
+      x2 += attn_out2;
+      // (c) LayerNorm
+      eigenLayerNorm(x2);
+
+      // (d) FeedForward
+      auto ff_out2 = eigenFF(x2, L2, D_model, FF_hidden_dim, FF_W1, FF_W2, FF_b1, FF_b2);
+      // (e) Residual
+      x2 += ff_out2;
+      // (f) LayerNorm
+      eigenLayerNorm(x2);
+    }
+
+
+
+
+    // x is now [L/2 x D_model]. Project back to [L/2 x D_in]
+    Eigen::MatrixXf final_out = x2 * W_out;
 
     // Store final_out in output[n]
-    for (size_t l = 0; l < L; l++) {
+    for (size_t l = 0; l < L2; l++) {
       for (size_t d = 0; d < D_in; d++) {
         output[n][l][d] = final_out(l, d);
       }
@@ -1925,7 +2302,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
   }
 
 
-  // Return shape: [N x L x D_in]
+  // Return shape: [N x L/2 x D_in]
   return output;
 }
 
@@ -1945,6 +2322,7 @@ bool MLGateSizer::compareOutputs(
     const std::vector<std::vector<std::vector<float>>>& B,
     float tol) const
 {
+  float total_diff = 0.0f;
   if (A.size() != B.size()) return false;
   for (size_t n = 0; n < A.size(); n++) {
     if (A[n].size() != B[n].size()) return false;
@@ -1952,12 +2330,17 @@ bool MLGateSizer::compareOutputs(
       if (A[n][l].size() != B[n][l].size()) return false;
       for (size_t d = 0; d < A[n][l].size(); d++) {
         float diff = std::fabs(A[n][l][d] - B[n][l][d]);
+        total_diff += diff;
         if (diff > tol) {
           return false;
         }
       }
     }
   }
+
+  std::cout << "Success! Total diff less than " << tol << std::endl;
+  std::cout << "Total diff: " << total_diff << std::endl;
+  std::cout << "Average diff: " << total_diff / (A.size() * A[0].size() * A[0][0].size()) << std::endl;
   return true;
 }
 
