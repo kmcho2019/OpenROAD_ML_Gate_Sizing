@@ -328,6 +328,9 @@ class MLGateSizer : public sta::dbStaState
 	void updateLibcellTypeEmbeddings(); 
 	size_t getEmbeddingSize() const { return embedding_size_; }
 
+	// Method to check libcell data consistency and print an organized summary:
+	void checkDataConsistencyAndPrint();
+
  private:
   void init();
   // void extractWorstPaths();
@@ -342,11 +345,14 @@ class MLGateSizer : public sta::dbStaState
 
   std::vector<std::vector<float>> pin_tokens_;
   std::vector<std::string> gate_types_;
+	
+	// Libcells and types Mapping
+	// Stores the libcells and their corresponding ids and types
   std::vector<std::string> ordered_libcells_;
 	std::unordered_map<std::string, int> libcell_to_id_;
 	std::unordered_map<std::string, int> libcell_to_type_id_;
 	std::unordered_map<int, std::vector<int>> libcell_type_id_to_libcell_ids_;
-	std::unordered_map<int, std::string> libcell_id_to_libcell_type_id_;
+	std::unordered_map<int, int> libcell_id_to_libcell_type_id_;
 
   std::unordered_map<int, std::vector<float>> libcell_id_to_embedding_;
 	std::unordered_map<int, std::vector<float>> libcell_type_id_to_embedding_;

@@ -29,6 +29,7 @@
 #include <Eigen/Dense>
 #include <algorithm>
 #include <fstream>
+#include <set>
 
 namespace rsz {
 
@@ -89,7 +90,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                               // seems to be setup time slack which is more
                               // relevant for gatesizing min/holdtime slack have
                               // to be fixed with buffer insertion)
-      2000, //10 * endpoints->size(), // group_count
+      100, //10 * endpoints->size(), // group_count
       endpoints->size(),      // endpoint_count
       true,                   // unique_pins
       -sta::INF,
@@ -153,6 +154,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     // Use generateLibcellOrdering to generate ordered_libcells_
     generateLibcellOrdering(all_libcell_names_temp);
 
+
     // Assign the id and type id based on the ordered_libcells_
     // Convetion being that the first cell is assigned id 0
     // For type id, id increments from 0 for each unique cell type
@@ -206,15 +208,13 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       }
     }
 
+
     // Initialize libcell_to_type_id_, libcell_type_id_to_libcell_ids_ and libcell_id_to_libcell_type_id_ based on libcell_to_id_ and libcell_to_type_id_temp
     updateLibcellTypeMap(libcell_to_type_id_temp);
 
     // Print the current tech_name
     //std::string tech_name = db->getTech()->getName();
     //std::cout << "Tech Name: " << tech_name << std::endl;
-    // Print number of libcells and libcell types
-    std::cout << "Total Libcells: " << libcell_to_id_.size() << std::endl;
-    std::cout << "Total Libcell Types: " << libcell_type_id_to_libcell_ids_.size() << std::endl;
 
     std::cout << "All Libcell Names: " << std::endl;
     for (const auto& cell : ordered_libcells_) {
@@ -223,22 +223,6 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
     std::cout << std::endl;
 
-    // Print Type ID from 0, 1, 2, ... then print the libcell names and IDs associated with the type ID
-    for (auto& type_pair : libcell_type_id_to_libcell_ids_) {
-      int type_id = type_pair.first;
-      std::cout << "Type ID: " << type_id << std::endl;
-      for (int cell_id : type_pair.second) {
-        std::string cell_name = ordered_libcells_[cell_id];
-        std::cout << "Cell Name: " << cell_name << " ID: " << libcell_to_id_[cell_name] << std::endl;
-      }
-    }
-
-    std::cout << std::endl;
-
-    // Print Cell Names and ID from libcell_to_id_ and Type ID
-    for (auto& cell : libcell_to_id_) {
-      std::cout << "Cell Name: " << cell.first << " ID: " << cell.second << " Type ID: " << libcell_to_type_id_[cell.first] << std::endl;
-    }
 
     // Attempt to load libcell embeddings from a binary file
     size_t embedding_size = 768; // Embedding size of deberta-v3-base model
@@ -285,6 +269,9 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       }
       std::cout << std::endl;
     }
+
+    std::cout << std::endl;
+    checkDataConsistencyAndPrint();
 
 
     // Normalization constants for PinMetrics
@@ -684,12 +671,12 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     std::cout << "Cell IDs Shape: (" << cell_ids.size() << ", " << cell_ids[0].size() << ")" << std::endl;
     std::cout << "Cell Type IDs Shape: (" << cell_type_ids.size() << ", " << cell_type_ids[0].size() << ")" << std::endl;
 
-    // Print example of the data_array (N, L, D), first 5 tokens of the first 2 sequence
+    // Print example of the data_array (N, L, D), first 5 tokens(20 dim of token or less) of the first 2 sequence
     for (size_t o = 0; o < ((2 > data_array.size()) ? data_array.size() : 2); o++) {
       std::cout << "Sequence " << o << ": " << std::endl;
       for (size_t i = 0; i < ((5 > data_array[o].size()) ? data_array[o].size() : 5); i++) {
         std::cout << "Token " << i << ": ";
-        for (size_t j = 0; j < data_array[0][0].size(); j++) {
+        for (size_t j = 0; j < ((20 > data_array[0][0].size()) ? data_array[0][0].size() : 20); j++) {
           std::cout << data_array[o][i][j] << " ";
         }
         std::cout << std::endl;
@@ -703,6 +690,30 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         std::cout << "Cell Type ID " << i << ": " << cell_type_ids[o][i] << std::endl;
       }
     }
+
+    // Print Pin, Cell and Cell Type IDs for the first 10 sequences
+    for (size_t o = 0; o < ((10 > pin_ids.size()) ? pin_ids.size() : 10); o++) {
+      std::cout << "Sequence " << o << ": " << std::endl;
+      std::cout << "Pin ID: " << std::endl;
+      for (size_t i = 0; i < pin_ids[0].size(); i++) {
+        std::cout << pin_ids[o][i] << " ";
+      }
+      std::cout << std::endl;
+      std::cout << "Cell ID: " << std::endl;
+      for (size_t i = 0; i < cell_ids[0].size(); i++) {
+        std::cout << cell_ids[o][i] << " ";
+      }
+      std::cout << std::endl;
+      std::cout << "Cell Type ID: " << std::endl;
+      for (size_t i = 0; i < cell_type_ids[0].size(); i++) {
+        std::cout << cell_type_ids[o][i] << " ";
+      }
+      std::cout << std::endl;
+    }
+
+    // Check if Cell ID and CELL Type ID are consistent and if they occur in pairs (e.g. 4 4 0 0 1 1 2 2 3 3)
+
+
 
 
 
@@ -893,16 +904,19 @@ void MLGateSizer::generateLibcellOrdering(const std::vector<std::string>& libcel
 }
 
  // update libcell_to_type_id_, libcell_type_id_to_libcell_ids_, and libcell_id_to_libcell_type_id_
-void MLGateSizer::updateLibcellTypeMap(const std::unordered_map<std::string, int>& libcell_to_type_id)
+void MLGateSizer::updateLibcellTypeMap(const std::unordered_map<std::string, int>& libcell_to_type_id_temp)
 {
-    libcell_to_type_id_ = libcell_to_type_id;
+    libcell_to_type_id_.clear();
     libcell_type_id_to_libcell_ids_.clear();
     libcell_id_to_libcell_type_id_.clear();
 
-	for (const auto& libcell : libcell_to_type_id_) {
-		std::string libcell_name = libcell.first;
-		int libcell_id = libcell.second;
-		int libcell_type_id = libcell_to_type_id_[libcell_name];
+	for (const auto& libcell : libcell_to_type_id_temp) {
+		const std::string& libcell_name = libcell.first;
+		int libcell_type_id = libcell.second;
+		int libcell_id = libcell_to_id_[libcell_name];
+
+    // Update the type maps
+    libcell_to_type_id_[libcell_name] = libcell_type_id;
 		libcell_type_id_to_libcell_ids_[libcell_type_id].push_back(libcell_id);
 		libcell_id_to_libcell_type_id_[libcell_id] = libcell_type_id;
 	}
@@ -964,6 +978,131 @@ void MLGateSizer::loadEmbeddingsBinary(const std::string& filename, size_t embed
         libcell_id_to_embedding_[i] = embedding;
     }
 }
+
+void MLGateSizer::checkDataConsistencyAndPrint()
+{
+  bool consistent = true; // Flag to keep track of any inconsistency found
+
+  // 1. Check that the size of ordered_libcells_ matches libcell_to_id_.size().
+  if (ordered_libcells_.size() != libcell_to_id_.size()) {
+    std::cerr << "[Error] Mismatch in number of libcells: "
+              << "ordered_libcells_.size()=" << ordered_libcells_.size()
+              << ", libcell_to_id_.size()=" << libcell_to_id_.size() << "\n";
+    consistent = false;
+  }
+
+  // 2. Check each libcell in ordered_libcells_ to see if it maps back correctly in libcell_to_id_.
+  for (int id = 0; id < static_cast<int>(ordered_libcells_.size()); ++id) {
+    const std::string &name = ordered_libcells_[id];
+
+    // (a) Ensure name exists in libcell_to_id_.
+    auto it_id = libcell_to_id_.find(name);
+    if (it_id == libcell_to_id_.end()) {
+      std::cerr << "[Error] Libcell name '" << name 
+                << "' not found in libcell_to_id_ map.\n";
+      consistent = false;
+    } else {
+      // (b) Check that the ID matches the index in ordered_libcells_.
+      if (it_id->second != id) {
+        std::cerr << "[Error] Inconsistent ID for libcell name '" << name
+                  << "': expected " << id << ", but found " << it_id->second 
+                  << " in libcell_to_id_.\n";
+        consistent = false;
+      }
+    }
+
+    // (c) Ensure name exists in libcell_to_type_id_.
+    auto it_type = libcell_to_type_id_.find(name);
+    if (it_type == libcell_to_type_id_.end()) {
+      std::cerr << "[Error] Libcell name '" << name
+                << "' not found in libcell_to_type_id_ map.\n";
+      consistent = false;
+      continue; // Can't check type consistency below without this
+    }
+    int type_from_name = it_type->second;
+
+    // (d) Check if we have an entry in libcell_id_to_libcell_type_id_ for this ID.
+    auto it_id_to_type = libcell_id_to_libcell_type_id_.find(id);
+    if (it_id_to_type == libcell_id_to_libcell_type_id_.end()) {
+      std::cerr << "[Error] Libcell ID " << id
+                << " not found in libcell_id_to_libcell_type_id_ map.\n";
+      consistent = false;
+      continue;
+    }
+    int type_from_id = it_id_to_type->second;
+
+    // (e) Check that the type IDs match.
+    if (type_from_name != type_from_id) {
+      std::cerr << "[Error] Inconsistent type for libcell name '" << name
+                << "' (type_from_name=" << type_from_name
+                << ", type_from_id=" << type_from_id << ").\n";
+      consistent = false;
+    }
+
+    // (f) Check that libcell_type_id_to_libcell_ids_[type] contains this ID.
+    auto it_type_to_ids = libcell_type_id_to_libcell_ids_.find(type_from_name);
+    if (it_type_to_ids == libcell_type_id_to_libcell_ids_.end()) {
+      std::cerr << "[Error] Type ID " << type_from_name
+                << " not found in libcell_type_id_to_libcell_ids_ map.\n";
+      consistent = false;
+    } else {
+      const auto &ids_for_type = it_type_to_ids->second;
+      if (std::find(ids_for_type.begin(), ids_for_type.end(), id) == ids_for_type.end()) {
+        std::cerr << "[Error] Libcell ID " << id << " (name='" << name
+                  << "') not found in libcell_type_id_to_libcell_ids_["
+                  << type_from_name << "].\n";
+        consistent = false;
+      }
+    }
+  }
+
+  // After all checks, if inconsistent, report and exit early or continue to print partial data.
+  if (!consistent) {
+    std::cerr << "[Warning] Inconsistencies found in the data structures.\n";
+    // Can either return early or proceed to print partial data anyway.
+    // return; 
+  }
+
+  // 3. Print out the organized data.
+  //    a) Number of libcells
+  std::cout << "Total number of libcells: " << ordered_libcells_.size() << "\n";
+  
+  //    b) Number of libcell types
+  //       We take the distinct keys from libcell_type_id_to_libcell_ids_ as the count of types.
+  std::cout << "Total number of libcell types: "
+            << libcell_type_id_to_libcell_ids_.size() << "\n";
+
+  //    c) Print each type in ascending order, then the libcells belonging to that type.
+  //       First, gather the type IDs in a vector and sort them.
+  std::vector<int> type_ids;
+  type_ids.reserve(libcell_type_id_to_libcell_ids_.size());
+  for (const auto &pair : libcell_type_id_to_libcell_ids_) {
+    type_ids.push_back(pair.first);
+  }
+  std::sort(type_ids.begin(), type_ids.end());
+
+  //    d) For each type ID in ascending order, print the libcells in that type.
+  for (int type_id : type_ids) {
+    std::cout << "\nType " << type_id << ":\n";
+    const auto &ids_for_type = libcell_type_id_to_libcell_ids_.at(type_id);
+    for (int libcell_id : ids_for_type) {
+      if (libcell_id >= 0 && libcell_id < static_cast<int>(ordered_libcells_.size())) {
+        std::cout << "  - ID = " << libcell_id
+                  << ", Name = " << ordered_libcells_[libcell_id] << "\n";
+      } else {
+        std::cerr << "  [Error] Invalid libcell_id " << libcell_id
+                  << " out of range [0, " << ordered_libcells_.size() - 1 << "].\n";
+      }
+    }
+  }
+
+  if (consistent) {
+    std::cout << "\n[Info] Data structures are consistent.\n";
+  } else {
+    std::cout << "\n[Warning] Finished checking, but inconsistencies were found.\n";
+  }
+}
+
 
 // Generate libcell type embeddings from libcell embeddings by averaging over all libcells of the same type
 void MLGateSizer::updateLibcellTypeEmbeddings()
@@ -1202,6 +1341,7 @@ static std::vector<std::vector<float>> multiHeadSelfAttention(
 
   return finalOut;
 }
+
 
 // ------------------------------------------------------------
 // Helper function: naive feed-forward network
