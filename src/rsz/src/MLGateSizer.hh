@@ -176,8 +176,9 @@ class MLGateSizer : public sta::dbStaState
       const PinSequenceCollector::SequenceCollection& sequences_;
       const std::unordered_map<std::string, int>& pin_name_to_id_;
       const std::unordered_map<std::string, int>& cell_name_to_id_;
-      const std::unordered_map<std::string, int>& cell_type_to_id_;
-      const std::unordered_map<int, std::vector<float>>& cell_type_embeddings_;
+			const std::unordered_map<std::string, int>& libcell_to_id_;
+      const std::unordered_map<std::string, int>& libcell_to_type_id_;
+      const std::unordered_map<int, std::vector<float>>& libcell_embeddings_;
       
       size_t max_seq_len_;
       size_t embedding_dim_;
@@ -188,13 +189,15 @@ class MLGateSizer : public sta::dbStaState
           const PinSequenceCollector::SequenceCollection& sequences,
           const std::unordered_map<std::string, int>& pin_id_map,
           const std::unordered_map<std::string, int>& cell_id_map,
-          const std::unordered_map<std::string, int>& cell_type_map,
+					const std::unordered_map<std::string, int>& libcell_id_map,
+          const std::unordered_map<std::string, int>& libcell_type_map,
           const std::unordered_map<int, std::vector<float>>& embeddings)
           : sequences_(sequences),
             pin_name_to_id_(pin_id_map),
             cell_name_to_id_(cell_id_map),
-            cell_type_to_id_(cell_type_map),
-            cell_type_embeddings_(embeddings) {
+						libcell_to_id_(libcell_id_map),
+            libcell_to_type_id_(libcell_type_map),
+            libcell_embeddings_(embeddings) {
           
           max_seq_len_ = findMaxSeqLen();
           embedding_dim_ = embeddings.begin()->second.size();
@@ -204,6 +207,7 @@ class MLGateSizer : public sta::dbStaState
       std::tuple<std::vector<std::vector<std::vector<float>>>,
                 std::vector<std::vector<int>>,
                 std::vector<std::vector<int>>,
+								std::vector<std::vector<int>>,
                 std::vector<std::vector<int>>> 
       build() {
           size_t N = sequences_.size();
@@ -215,7 +219,8 @@ class MLGateSizer : public sta::dbStaState
               N, std::vector<std::vector<float>>(L, std::vector<float>(D, 0.0)));
           std::vector<std::vector<int>> pin_ids(N, std::vector<int>(L, -1));
           std::vector<std::vector<int>> cell_ids(N, std::vector<int>(L, -1));
-          std::vector<std::vector<int>> cell_type_ids(N, std::vector<int>(L, -1));
+					std::vector<std::vector<int>> libcell_ids(N, std::vector<int>(L, -1));
+          std::vector<std::vector<int>> libcell_type_ids(N, std::vector<int>(L, -1));
           
           // Fill arrays
           for (size_t i = 0; i < N; i++) {
@@ -228,19 +233,21 @@ class MLGateSizer : public sta::dbStaState
                   std::copy(features.begin(), features.end(), data_array[i][j].begin());
                   
                   // Add embedding
-                  int type_id = cell_type_to_id_.at(metrics.cell_type);
-                  const auto& embedding = cell_type_embeddings_.at(type_id);
+									int libcell_id = libcell_to_id_.at(metrics.cell_type);
+                  int libcell_type_id = libcell_to_type_id_.at(metrics.cell_type);
+                  const auto& embedding = libcell_embeddings_.at(libcell_type_id);
                   std::copy(embedding.begin(), embedding.end(), 
                           data_array[i][j].begin() + num_numerical_features_);
                   
                   // Fill lookup arrays
                   pin_ids[i][j] = pin_name_to_id_.at(metrics.pin_name);
                   cell_ids[i][j] = cell_name_to_id_.at(metrics.cell_name);
-                  cell_type_ids[i][j] = type_id;
+									libcell_ids[i][j] = libcell_id;
+                  libcell_type_ids[i][j] = libcell_type_id;
               }
           }
           
-          return {data_array, pin_ids, cell_ids, cell_type_ids};
+          return {data_array, pin_ids, cell_ids, libcell_ids, libcell_type_ids};
       }
       
   private:

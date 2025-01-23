@@ -651,25 +651,27 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     auto builder = SequenceArrayBuilder(collector.getSequences(),
                                       pin_name_to_id,
                                       cell_name_to_id,
+                                      libcell_to_id_,
                                       libcell_to_type_id_,
-                                      libcell_type_id_to_embedding_);
+                                      libcell_id_to_embedding_);
 
-    auto [data_array, pin_ids, cell_ids, cell_type_ids] = builder.build();
+    auto [data_array, pin_ids, cell_ids, libcell_ids, libcell_type_ids] = builder.build();
 
 
     
-    // Debugging print statements to check data_array and cell_type_ids
+    // Debugging print statements to check data_array and libcell_type_ids
     
-    // Print shape of the data_array, pin_ids, cell_ids, and cell_type_ids
+    // Print shape of the data_array, pin_ids, cell_ids, and libcell_type_ids
     // N = number of sequences, L = max sequence length, D = number of features(token dimensions = pin_data + embedding)
     // data_array shape: (N, L, D)
     // pin_ids shape: (N, L): Pin IDs are used to lookup the pin name
     // cell_ids shape: (N, L): Cell IDs are used to lookup the cell name
-    // cell_type_ids shape: (N, L): Cell Type IDs are used to lookup the cell type name
+    // libcell_type_ids shape: (N, L): Libcell IDs are used to lookup the libcell name
+    // libcell_type_ids shape: (N, L): Libcell Type IDs are used to lookup the cell type which are used to input the available embeddings
     std::cout << "Data Array Shape: (" << data_array.size() << ", " << data_array[0].size() << ", " << data_array[0][0].size() << ")" << std::endl;
     std::cout << "Pin IDs Shape: (" << pin_ids.size() << ", " << pin_ids[0].size() << ")" << std::endl;
     std::cout << "Cell IDs Shape: (" << cell_ids.size() << ", " << cell_ids[0].size() << ")" << std::endl;
-    std::cout << "Cell Type IDs Shape: (" << cell_type_ids.size() << ", " << cell_type_ids[0].size() << ")" << std::endl;
+    std::cout << "Libcell Type IDs Shape: (" << libcell_type_ids.size() << ", " << libcell_type_ids[0].size() << ")" << std::endl;
 
     // Print example of the data_array (N, L, D), first 5 tokens(20 dim of token or less) of the first 2 sequence
     for (size_t o = 0; o < ((2 > data_array.size()) ? data_array.size() : 2); o++) {
@@ -683,11 +685,11 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       }
     }
 
-    // Print cell_type_ids for the first 5 tokens of the first 2 sequences
+    // Print libcell_type_ids for the first 5 tokens of the first 2 sequences
     for (size_t o = 0; o < ((2 > data_array.size()) ? data_array.size() : 2); o++) {
       std::cout << "Sequence " << o << ": " << std::endl;
       for (size_t i = 0; i < ((5 > data_array[o].size()) ? data_array[o].size() : 5); i++) {
-        std::cout << "Cell Type ID " << i << ": " << cell_type_ids[o][i] << std::endl;
+        std::cout << "Libcell Type ID " << i << ": " << libcell_type_ids[o][i] << std::endl;
       }
     }
 
@@ -704,14 +706,19 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         std::cout << cell_ids[o][i] << " ";
       }
       std::cout << std::endl;
-      std::cout << "Cell Type ID: " << std::endl;
-      for (size_t i = 0; i < cell_type_ids[0].size(); i++) {
-        std::cout << cell_type_ids[o][i] << " ";
+      std::cout << "Libcell ID: " << std::endl;
+      for (size_t i = 0; i < libcell_ids[0].size(); i++) {
+        std::cout << libcell_ids[o][i] << " ";
+      }
+      std::cout << std::endl;
+      std::cout << "Libcell Type ID: " << std::endl;
+      for (size_t i = 0; i < libcell_type_ids[0].size(); i++) {
+        std::cout << libcell_type_ids[o][i] << " ";
       }
       std::cout << std::endl;
     }
 
-    // Check if Cell ID and CELL Type ID are consistent and if they occur in pairs (e.g. 4 4 0 0 1 1 2 2 3 3)
+    // Check if Cell ID and Libcell Type ID are consistent and if they occur in pairs (e.g. 4 4 0 0 1 1 2 2 3 3)
 
 
 
