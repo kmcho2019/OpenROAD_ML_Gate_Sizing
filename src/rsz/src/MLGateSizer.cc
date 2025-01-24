@@ -270,6 +270,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 
 
     // Normalization constants for PinMetrics
+    // Tempoarily commented out, will be used for normalization
+    /*
     float pin_loc_x_max = 0.0;
     float pin_loc_x_min = 0.0;
     float pin_loc_x_mean = 0.0;
@@ -334,6 +336,8 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     float fall_arrival_time_min = 0.0;
     float fall_arrival_time_mean = 0.0;
     float fall_arrival_time_std = 0.0;
+
+    */
 
 
 
@@ -732,7 +736,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     size_t L = data_array[0].size();  // Max sequence length (78)
     // check if L is even or not, assert if not with error L must be even
     assert(L % 2 == 0 && "L must be even");
-    size_t L_2 = L/2;  // Half of the sequence length, corresponds to the 2nd encoder layer input sequence length
+    // size_t L_2 = L/2;  // Half of the sequence length, corresponds to the 2nd encoder layer input sequence length (commented out as not used)
     size_t D_in = data_array[0][0].size();  // Input feature dimensions (17)
     size_t D_emb = embedding_size_; // Embedding dimensions (768)
     size_t D_model = 128;//64; // Transformer model hidden dimensions (64)
@@ -1573,26 +1577,11 @@ static std::vector<std::vector<float>> multiHeadSelfAttention(
   assert(D % num_heads == 0 && "D must be divisible by num_heads");
   size_t Dh = D / num_heads;
 
-  // 1) Create random (or dummy) Wq, Wk, Wv of shape [D x D].
-  // For demonstration, let's fill them with small random values.
-  static std::mt19937 rng(42);
-  std::uniform_real_distribution<float> dist(-0.1f, 0.1f);
-
-  auto randomMatrix = [&](size_t rows, size_t cols) {
-    std::vector<std::vector<float>> mat(rows, std::vector<float>(cols, 0.0f));
-    for (size_t r = 0; r < rows; r++) {
-      for (size_t c = 0; c < cols; c++) {
-        mat[r][c] = dist(rng);
-      }
-    }
-    return mat;
-  };
-
   //std::vector<std::vector<float>> Wq = randomMatrix(D, D);
   //std::vector<std::vector<float>> Wk = randomMatrix(D, D);
   //std::vector<std::vector<float>> Wv = randomMatrix(D, D);
 
-  // 2) Flatten seq from [L x D] to a form we can do matMul with:
+  // 1) Flatten seq from [L x D] to a form we can do matMul with:
   // For matMul, we treat it as [L x D].
   // Q = seq * Wq => shape [L x D]
   // K = seq * Wk => shape [L x D]
@@ -1603,7 +1592,7 @@ static std::vector<std::vector<float>> multiHeadSelfAttention(
   auto K = matMul(seq, Wk);
   auto V = matMul(seq, Wv);
 
-  // 3) Reshape Q,K,V into [L x H x Dh], do attention per head
+  // 2) Reshape Q,K,V into [L x H x Dh], do attention per head
   // We'll store them in 3D structures: shape: Q_3d[H][L][Dh]
   auto to3D = [&](const std::vector<std::vector<float>>& X) {
     // X is [L x D]; we want [H x L x Dh]
@@ -1629,7 +1618,7 @@ static std::vector<std::vector<float>> multiHeadSelfAttention(
     applyRoPE(K3[h]);
   }
 
-  // 4) Self-attention per head
+  // 3) Self-attention per head
   // outHead[h] shape [L x Dh]
   auto softmax = [&](std::vector<float>& logits) {
     float max_val = logits[0];
@@ -1675,7 +1664,7 @@ static std::vector<std::vector<float>> multiHeadSelfAttention(
     }
   }
 
-  // 5) Concatenate heads back => shape [L x D]
+  // 4) Concatenate heads back => shape [L x D]
   std::vector<std::vector<float>> outSeq(L, std::vector<float>(D, 0.0f));
   for (size_t l_ = 0; l_ < L; l_++) {
     for (size_t h_ = 0; h_ < (size_t)num_heads; h_++) {
@@ -1685,7 +1674,7 @@ static std::vector<std::vector<float>> multiHeadSelfAttention(
     }
   }
 
-  // 6) Output projection
+  // 5) Output projection
   // We'll define Wo: [D x D] for simplicity
   //std::vector<std::vector<float>> Wo = randomMatrix(D, D);
 
@@ -2328,31 +2317,6 @@ static Eigen::MatrixXf eigenFF(
   //int L = seq.rows();
   //int D = seq.cols();
   //int H = 2*D;
-
-  static std::mt19937 rng(123);
-  std::uniform_real_distribution<float> dist(-0.1f, 0.1f);
-
-  auto rMat = [&](int r, int c){
-    Eigen::MatrixXf m(r,c);
-    for(int i=0; i<r; i++){
-      for(int j=0; j<c; j++){
-        m(i,j) = dist(rng);
-      }
-    }
-    return m;
-  };
-  auto rVec = [&](int len){
-    Eigen::VectorXf v(len);
-    for(int i=0; i<len; i++){
-      v(i) = dist(rng);
-    }
-    return v;
-  };
-
-  //Eigen::MatrixXf W1 = rMat(D,H);
-  //Eigen::VectorXf b1 = rVec(H);
-  //Eigen::MatrixXf W2 = rMat(H,D);
-  //Eigen::VectorXf b2 = rVec(D);
 
   // tmp = seq*W1 + b1 => [L x H]
   Eigen::MatrixXf tmp = seq * W1;
