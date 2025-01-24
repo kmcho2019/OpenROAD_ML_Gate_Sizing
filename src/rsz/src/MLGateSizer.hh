@@ -301,7 +301,8 @@ struct TransformerWeights
 
 	// Current model hyperparameters (subject to change)
 	// Hyperparams (example)
-	// D_in = 17
+	// D_in = 786 # 768(libcell embedding) + 18 (numerical features)
+	// D_out = 50 # maximum number of classes (available libcells)
 	// D_emb = 768
 	// D_model = 128
 	// FF_hidden_dim = 4 * D_model  # 512
@@ -312,7 +313,7 @@ struct TransformerWeights
 		// Projections
 		Eigen::MatrixXf W_in1;  // shape [D_in, D_model]
 		Eigen::MatrixXf W_in2;  // shape [D_emb, D_model]
-		Eigen::MatrixXf W_out;  // shape [D_model, D_in]  or [D_model, class_num], depending on future implementation
+		Eigen::MatrixXf W_out;  // shape [D_model, D_out]  or [D_model, class_num], depending on future implementation
 
 		// Example: if you have multiple encoder layers, store them in vectors:
 		// For num_encoder_layers of the first encoder:
@@ -375,6 +376,7 @@ class MLGateSizer : public sta::dbStaState
       size_t N,
       size_t L,
       size_t D_in,
+			size_t D_out,
 			size_t D_emb,
       size_t D_model,
       size_t FF_hidden_dim,
@@ -389,6 +391,7 @@ class MLGateSizer : public sta::dbStaState
       size_t N,
       size_t L,
       size_t D_in,
+			size_t D_out,
 			size_t D_emb,
       size_t D_model,
       size_t FF_hidden_dim,
@@ -403,6 +406,7 @@ class MLGateSizer : public sta::dbStaState
       size_t N,
       size_t L,
       size_t D_in,
+			size_t D_out,
 			size_t D_emb,
       size_t D_model,
       size_t FF_hidden_dim,
