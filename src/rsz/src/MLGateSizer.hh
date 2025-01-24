@@ -296,6 +296,9 @@ struct ParamData {
 // You can customize or expand as needed for multi-layer.
 struct TransformerWeights
 {
+	// flag for whether weights have been loaded
+	bool loaded = false;
+
 	// Current model hyperparameters (subject to change)
 	// Hyperparams (example)
 	// D_in = 17
@@ -357,6 +360,11 @@ class MLGateSizer : public sta::dbStaState
   // into a map:  param_name -> ParamData. Then we pick out the relevant parameters 
   // and place them into the TransformerWeights struct.
   void loadWeights(const std::string& weight_file); 
+
+	// Print Loaded Model Summary
+	// Based on std::unordered_map<std::string, ParamData>& param_map from loadWeights/loadModelWeightsRobust
+	// Print summary of the model weights loaded
+	void printModelSummary(const std::unordered_map<std::string, ParamData>& param_map);
 
 
   // Naive encoder-like transformer forward pass (initial implementation)
@@ -422,6 +430,7 @@ class MLGateSizer : public sta::dbStaState
 
   // Binary file handling
   void writeBinaryFile(const std::string& filename, const std::vector<std::vector<std::vector<float>>>& data);
+	void exportTypeEmbeddings(const std::string& filename);
   std::vector<std::vector<std::vector<float>>> readBinaryFile(const std::string& filename);
 
   void generateLibcellOrdering(const std::vector<std::string>& libcells);

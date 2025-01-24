@@ -30,6 +30,10 @@
 #include <fstream>
 #include <set>
 
+#include <iomanip>
+#include <sstream>
+#include <numeric>  // For std::accumulate
+
 namespace rsz {
 
 MLGateSizer::MLGateSizer(Resizer* resizer) : resizer_(resizer)
@@ -226,11 +230,17 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     if (libcell_to_id_.size() == 216) { // ASAP7
       loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/ASAP7_libcell_embeddings.bin", embedding_size);
       updateLibcellTypeEmbeddings();
-      loadWeights("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/transformer_params.bin"); // Load the transformer weights
+      const std::string type_embedding_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/ASAP7_libcell_type_embeddings.bin";
+      const std::string weight_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/transformer_params.bin";
+      exportTypeEmbeddings(type_embedding_filename);
+      loadWeights(weight_filename); // Load the transformer weights
   }
     else if (libcell_to_id_.size() == 135) {  // Nangate45
       loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/nangate45_libcell_embeddings.bin", embedding_size);
       updateLibcellTypeEmbeddings();
+      const std::string type_embedding_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/nangate45_libcell_type_embeddings.bin";
+      exportTypeEmbeddings(type_embedding_filename);
+      const std::string weight_filename = "";
     }
     else {
       std::cout << "Unsupported, unable to load embeddings" << std::endl;
@@ -839,8 +849,18 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         }
       }
     }
+    // Test using loaded model if transformer_weights_ is not empty
+    if (transformer_weights_.loaded) {
+      start = std::chrono::steady_clock::now();
+      auto loaded_eigen_output = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2, transformer_weights_);
+      end = std::chrono::steady_clock::now();
 
+      auto loaded_naive_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
+      std::cout << "Loaded Eigen  time: " << loaded_naive_us << " us   => "
+                << (1e6 * double(total_tokens) / double(loaded_naive_us))
+                << " tokens/sec\n";
+    }
 
   }
 
@@ -885,6 +905,61 @@ void MLGateSizer::writeBinaryFile(const std::string& filename,
     }
 }
 
+void MLGateSizer::exportTypeEmbeddings(const std::string& filename)
+{
+  const auto& embedding_map = libcell_type_id_to_embedding_;
+  
+  if (embedding_map.empty()) {
+    logger_->error(utl::RSZ, 1006, "Embedding map is empty");
+    return;
+  }
+
+  // Collect and sort keys
+  std::vector<int> keys;
+  for (const auto& pair : embedding_map) {
+    keys.push_back(pair.first);
+  }
+  std::sort(keys.begin(), keys.end());
+
+  // Check if keys are contiguous starting from 0
+  size_t N = keys.size();
+  for (size_t i = 0; i < N; ++i) {
+    if (keys[i] != static_cast<int>(i)) {
+      logger_->error(utl::RSZ, 6007, "libcell_type_ids are not contiguous starting from 0");
+      return;
+    }
+  }
+
+  // Check all embeddings have the same dimension
+  size_t D = embedding_map.at(keys[0]).size();
+  for (const auto& key : keys) {
+  if (embedding_map.at(key).size() != D) {
+    logger_->error(utl::RSZ, 6008, "Inconsistent embedding dimensions");
+    return;
+  }
+  }
+
+  // Open file
+  std::ofstream out(filename, std::ios::binary);
+  if (!out) {
+    logger_->error(utl::RSZ, 6001, "Cannot open file {} for writing", filename);
+    return;
+  }
+
+  // Write dimensions (N and D)
+  out.write(reinterpret_cast<const char*>(&N), sizeof(size_t));
+  out.write(reinterpret_cast<const char*>(&D), sizeof(size_t));
+
+  // Write embeddings in order of sorted keys
+  for (const auto& key : keys) {
+    const auto& embedding = embedding_map.at(key);
+    out.write(reinterpret_cast<const char*>(embedding.data()), D * sizeof(float));
+  }
+
+  if (!out) {
+    logger_->error(utl::RSZ, 6002, "Error writing to file {}", filename);
+  }
+}
 
 std::vector<std::vector<std::vector<float>>> MLGateSizer::readBinaryFile(const std::string& filename)
 {
@@ -1318,56 +1393,131 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
     std::string errMsg;
     std::unordered_map<std::string, ParamData> param_map;
     bool ok = loadModelWeightsRobust(weight_file, param_map, errMsg);
+    
+    // Print param_map structure for debugging
+    for (const auto& pair : param_map) {
+        const std::string& name = pair.first;
+        const ParamData& pd = pair.second;
+        std::cout << "Param: " << name << " Shape: [";
+        for (size_t i = 0; i < pd.shape.size(); i++) {
+            std::cout << pd.shape[i] << (i < pd.shape.size() - 1 ? ", " : "");
+        }
+        std::cout << "]\n";
+    }
+
+    // Print Model Summary of the loaded weights based on param_map
+    printModelSummary(param_map);
+
+    
     if (!ok) {
         logger_->error(utl::RSZ, 5001, "Cannot load weights: {}", errMsg);
         return;
     }
-
+    
     // Load projection layers
     const std::vector<std::string> proj_layers = {
         "proj_in1.weight", "proj_in2.weight", "proj_out.weight"
     };
     
     for (const auto& name : proj_layers) {
-        auto it = param_map.find(name);
-        if (it == param_map.end()) {
-            logger_->error(utl::RSZ, 5002, "Missing param {}", name);
-            return;
-        }
-        
-        if (name == "proj_in1.weight") {
-            fillEigenMatrix(it->second, transformer_weights_.W_in1, true, errMsg);
-        } else if (name == "proj_in2.weight") {
-            fillEigenMatrix(it->second, transformer_weights_.W_in2, true, errMsg);
-        } else if (name == "proj_out.weight") {
-            fillEigenMatrix(it->second, transformer_weights_.W_out, true, errMsg);
-        }
+      
+      auto it = param_map.find(name);
+      if (it == param_map.end()) {
+          logger_->error(utl::RSZ, 5002, "Missing param {}", name);
+          return;
+      }
+      
+      if (name == "proj_in1.weight") {
+          fillEigenMatrix(it->second, transformer_weights_.W_in1, true, errMsg);
+      } else if (name == "proj_in2.weight") {
+          fillEigenMatrix(it->second, transformer_weights_.W_in2, true, errMsg);
+      } else if (name == "proj_out.weight") {
+          fillEigenMatrix(it->second, transformer_weights_.W_out, true, errMsg);
+      }
+    }
+    // Determine the max layer indices from the keys in param_map.
+    int max_enc1_layer = -1;
+    int max_enc2_layer = -1;
+
+    for (const auto& kv : param_map) {
+      const std::string& key = kv.first;
+      
+      // Check if the key starts with "encoders1."
+      static const std::string enc1_prefix = "encoders1.";
+      if (key.rfind(enc1_prefix, 0) == 0) {  // rfind(..., 0) == 0 means "starts with"
+        // Find the dot after the layer index
+        // "encoders1." is length 10, so the layer index starts at key[10]
+        size_t dot_pos = key.find('.', enc1_prefix.size());
+        // Extract substring representing the layer number
+        std::string layer_str = key.substr(enc1_prefix.size(), dot_pos - enc1_prefix.size());
+        int layer_idx = std::stoi(layer_str);
+        max_enc1_layer = std::max(max_enc1_layer, layer_idx);
+      }
+
+      // Check if the key starts with "encoders2."
+      static const std::string enc2_prefix = "encoders2.";
+      if (key.rfind(enc2_prefix, 0) == 0) {
+        size_t dot_pos = key.find('.', enc2_prefix.size());
+        std::string layer_str = key.substr(enc2_prefix.size(), dot_pos - enc2_prefix.size());
+        int layer_idx = std::stoi(layer_str);
+        max_enc2_layer = std::max(max_enc2_layer, layer_idx);
+      }
     }
 
+    // Convert to a total layer count
+    int num_encoder1_layers = max_enc1_layer + 1; // e.g. if max layer index was 5, that means 6 layers.
+    int num_encoder2_layers = max_enc2_layer + 1; // e.g. if max layer index was 1, that means 2 layers.
+
+    // Resize the relevant vectors in transformer_weights_ to the correct size
+    transformer_weights_.encoder1_0_Wq_1.resize(num_encoder1_layers);
+    transformer_weights_.encoder1_0_Wk_1.resize(num_encoder1_layers);
+    transformer_weights_.encoder1_0_Wv_1.resize(num_encoder1_layers);
+    transformer_weights_.encoder1_0_Wo_1.resize(num_encoder1_layers);
+
+    transformer_weights_.encoder1_0_FF_W1_1.resize(num_encoder1_layers);
+    transformer_weights_.encoder1_0_FF_b1_1.resize(num_encoder1_layers);
+    transformer_weights_.encoder1_0_FF_W2_1.resize(num_encoder1_layers);
+    transformer_weights_.encoder1_0_FF_b2_1.resize(num_encoder1_layers);
+
+    transformer_weights_.encoder2_0_Wq_2.resize(num_encoder2_layers);
+    transformer_weights_.encoder2_0_Wk_2.resize(num_encoder2_layers);
+    transformer_weights_.encoder2_0_Wv_2.resize(num_encoder2_layers);
+    transformer_weights_.encoder2_0_Wo_2.resize(num_encoder2_layers);
+
+    transformer_weights_.encoder2_0_FF_W1_2.resize(num_encoder2_layers);
+    transformer_weights_.encoder2_0_FF_b1_2.resize(num_encoder2_layers);
+    transformer_weights_.encoder2_0_FF_W2_2.resize(num_encoder2_layers);
+    transformer_weights_.encoder2_0_FF_b2_2.resize(num_encoder2_layers);
+
+
+
+    
     // Load first encoder layers
-    for (int layer = 0; layer < 6; layer++) {
-        std::string base = "encoders1." + std::to_string(layer);
+    for (int layer = 0; layer < num_encoder1_layers; layer++) {
+      
+      std::string base = "encoders1." + std::to_string(layer);
+      
+      // Load attention weights
+      std::vector<std::string> attn_weights = {".self_attn.Wq.weight", ".self_attn.Wk.weight", 
+                                              ".self_attn.Wv.weight", ".self_attn.Wo.weight"};
+      
+      for (const auto& w : attn_weights) {
         
-        // Load attention weights
-        std::vector<std::string> attn_weights = {".self_attn.Wq.weight", ".self_attn.Wk.weight", 
-                                                ".self_attn.Wv.weight", ".self_attn.Wo.weight"};
-        
-        for (const auto& w : attn_weights) {
-            auto it = param_map.find(base + w);
-            if (it == param_map.end()) {
-                logger_->error(utl::RSZ, 5003, "Missing encoder1 attention weight {}", base + w);
-                return;
-            }
-            
-            if (w.find("Wq") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wq_1[layer], true, errMsg);
-            } else if (w.find("Wk") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wk_1[layer], true, errMsg);
-            } else if (w.find("Wv") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wv_1[layer], true, errMsg);
-            } else if (w.find("Wo") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wo_1[layer], true, errMsg);
-            }
+          auto it = param_map.find(base + w);
+          if (it == param_map.end()) {
+              logger_->error(utl::RSZ, 5003, "Missing encoder1 attention weight {}", base + w);
+              return;
+          }
+          
+          if (w.find("Wq") != std::string::npos) {
+              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wq_1[layer], true, errMsg);
+          } else if (w.find("Wk") != std::string::npos) {
+              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wk_1[layer], true, errMsg);
+          } else if (w.find("Wv") != std::string::npos) {
+              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wv_1[layer], true, errMsg);
+          } else if (w.find("Wo") != std::string::npos) {
+              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wo_1[layer], true, errMsg);
+          }
         }
         
         // Load FF weights
@@ -1375,72 +1525,239 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
                                               ".ff.net.2.weight", ".ff.net.2.bias"};
         
         for (const auto& w : ff_weights) {
-            auto it = param_map.find(base + w);
-            if (it == param_map.end()) {
-                logger_->error(utl::RSZ, 5004, "Missing encoder1 FF weight {}", base + w);
-                return;
-            }
-            
-            if (w.find("net.0.weight") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder1_0_FF_W1_1[layer], true, errMsg);
-            } else if (w.find("net.0.bias") != std::string::npos) {
-                fillEigenVector(it->second, transformer_weights_.encoder1_0_FF_b1_1[layer], errMsg);
-            } else if (w.find("net.2.weight") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder1_0_FF_W2_1[layer], true, errMsg);
-            } else if (w.find("net.2.bias") != std::string::npos) {
-                fillEigenVector(it->second, transformer_weights_.encoder1_0_FF_b2_1[layer], errMsg);
-            }
+          
+          auto it = param_map.find(base + w);
+          if (it == param_map.end()) {
+            logger_->error(utl::RSZ, 5004, "Missing encoder1 FF weight {}", base + w);
+            return;
+          }
+          
+          if (w.find("net.0.weight") != std::string::npos) {
+              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_FF_W1_1[layer], true, errMsg);
+          } else if (w.find("net.0.bias") != std::string::npos) {
+              fillEigenVector(it->second, transformer_weights_.encoder1_0_FF_b1_1[layer], errMsg);
+          } else if (w.find("net.2.weight") != std::string::npos) {
+              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_FF_W2_1[layer], true, errMsg);
+          } else if (w.find("net.2.bias") != std::string::npos) {
+              fillEigenVector(it->second, transformer_weights_.encoder1_0_FF_b2_1[layer], errMsg);
+          }
         }
+    }
+    
+    // Load second encoder layers
+    for (int layer = 0; layer < num_encoder2_layers; layer++) {
+      
+      std::string base = "encoders2." + std::to_string(layer);
+      
+      // Load cross attention weights
+      std::vector<std::string> attn_weights = {".cross_attn.Wq.weight", ".cross_attn.Wk.weight",
+                                              ".cross_attn.Wv.weight", ".cross_attn.Wo.weight"};
+      
+      for (const auto& w : attn_weights) {
+          auto it = param_map.find(base + w);
+          if (it == param_map.end()) {
+            logger_->error(utl::RSZ, 5005, "Missing encoder2 attention weight {}", base + w);
+            return;
+          }
+          
+          if (w.find("Wq") != std::string::npos) {
+            fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wq_2[layer], true, errMsg);
+          } else if (w.find("Wk") != std::string::npos) {
+            fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wk_2[layer], true, errMsg);
+          } else if (w.find("Wv") != std::string::npos) {
+            fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wv_2[layer], true, errMsg);
+          } else if (w.find("Wo") != std::string::npos) {
+            fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wo_2[layer], true, errMsg);
+          }
+        }
+        
+        // Load FF weights
+        std::vector<std::string> ff_weights = {".ff.net.0.weight", ".ff.net.0.bias",
+                                              ".ff.net.2.weight", ".ff.net.2.bias"};
+        
+        for (const auto& w : ff_weights) {
+          auto it = param_map.find(base + w);
+          if (it == param_map.end()) {
+              logger_->error(utl::RSZ, 5006, "Missing encoder2 FF weight {}", base + w);
+              return;
+          }
+          
+          if (w.find("net.0.weight") != std::string::npos) {
+              fillEigenMatrix(it->second, transformer_weights_.encoder2_0_FF_W1_2[layer], true, errMsg);
+          } else if (w.find("net.0.bias") != std::string::npos) {
+              fillEigenVector(it->second, transformer_weights_.encoder2_0_FF_b1_2[layer], errMsg);
+          } else if (w.find("net.2.weight") != std::string::npos) {
+              fillEigenMatrix(it->second, transformer_weights_.encoder2_0_FF_W2_2[layer], true, errMsg);
+          } else if (w.find("net.2.bias") != std::string::npos) {
+              fillEigenVector(it->second, transformer_weights_.encoder2_0_FF_b2_2[layer], errMsg);
+          }
+        }
+    }
+    // Successfully loaded all weights
+    transformer_weights_.loaded = true;
+}
+
+// Print Model Summary for Loaded Weights
+void MLGateSizer::printModelSummary(const std::unordered_map<std::string, ParamData>& param_map) 
+{
+  // Data extraction variables
+  int max_encoder1_layer = -1;
+  int max_encoder2_layer = -1;
+  size_t D_model = 0;
+  size_t FF_hidden_dim = 0;
+  size_t D_in = 0;
+  size_t D_emb = 0;
+  bool dims_initialized = false;
+
+  // Temporary storage
+  size_t total_params = 0;
+  std::unordered_map<std::string, size_t> projection_params;
+  size_t encoder1_params = 0;
+  size_t encoder2_params = 0;
+
+  // First pass: Extract dimensions
+  for (const auto& [name, pd] : param_map) {
+    // Extract encoder layers
+    if (name.compare(0, 10, "encoders1.") == 0) {
+      size_t dot_pos = name.find('.', 10);
+      if (dot_pos != std::string::npos) {
+        int layer = std::stoi(name.substr(10, dot_pos-10));
+        max_encoder1_layer = std::max(max_encoder1_layer, layer);
+      }
+    }
+    else if (name.compare(0, 10, "encoders2.") == 0) {
+      size_t dot_pos = name.find('.', 10);
+      if (dot_pos != std::string::npos) {
+        int layer = std::stoi(name.substr(10, dot_pos-10));
+        max_encoder2_layer = std::max(max_encoder2_layer, layer);
+      }
     }
 
-    // Load second encoder layers
-    for (int layer = 0; layer < 2; layer++) {
-        std::string base = "encoders2." + std::to_string(layer);
-        
-        // Load cross attention weights
-        std::vector<std::string> attn_weights = {".cross_attn.Wq.weight", ".cross_attn.Wk.weight",
-                                                ".cross_attn.Wv.weight", ".cross_attn.Wo.weight"};
-        
-        for (const auto& w : attn_weights) {
-            auto it = param_map.find(base + w);
-            if (it == param_map.end()) {
-                logger_->error(utl::RSZ, 5005, "Missing encoder2 attention weight {}", base + w);
-                return;
-            }
-            
-            if (w.find("Wq") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wq_2[layer], true, errMsg);
-            } else if (w.find("Wk") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wk_2[layer], true, errMsg);
-            } else if (w.find("Wv") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wv_2[layer], true, errMsg);
-            } else if (w.find("Wo") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wo_2[layer], true, errMsg);
-            }
-        }
-        
-        // Load FF weights
-        std::vector<std::string> ff_weights = {".ff.net.0.weight", ".ff.net.0.bias",
-                                              ".ff.net.2.weight", ".ff.net.2.bias"};
-        
-        for (const auto& w : ff_weights) {
-            auto it = param_map.find(base + w);
-            if (it == param_map.end()) {
-                logger_->error(utl::RSZ, 5006, "Missing encoder2 FF weight {}", base + w);
-                return;
-            }
-            
-            if (w.find("net.0.weight") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder2_0_FF_W1_2[layer], true, errMsg);
-            } else if (w.find("net.0.bias") != std::string::npos) {
-                fillEigenVector(it->second, transformer_weights_.encoder2_0_FF_b1_2[layer], errMsg);
-            } else if (w.find("net.2.weight") != std::string::npos) {
-                fillEigenMatrix(it->second, transformer_weights_.encoder2_0_FF_W2_2[layer], true, errMsg);
-            } else if (w.find("net.2.bias") != std::string::npos) {
-                fillEigenVector(it->second, transformer_weights_.encoder2_0_FF_b2_2[layer], errMsg);
-            }
-        }
+    // Extract model dimensions
+    if (!dims_initialized) {
+      if (name.find("Wq.weight") != std::string::npos && pd.shape.size() == 2) {
+        D_model = pd.shape[0];
+      }
+      else if (name.find("net.0.weight") != std::string::npos && pd.shape.size() == 2) {
+        FF_hidden_dim = pd.shape[0];
+      }
+      else if (name == "proj_in1.weight" && pd.shape.size() == 2) {
+        D_in = pd.shape[1];
+      }
+      else if (name == "proj_in2.weight" && pd.shape.size() == 2) {
+        D_emb = pd.shape[1];
+      }
+      
+      if (D_model && FF_hidden_dim && D_in && D_emb) {
+        dims_initialized = true;
+      }
     }
+  }
+
+  // Calculate layer counts
+  const int num_encoder1 = max_encoder1_layer + 1;
+  const int num_encoder2 = max_encoder2_layer + 1;
+
+  // Second pass: count parameters
+  for (const auto& [name, pd] : param_map) {
+    const size_t params = std::accumulate(
+      pd.shape.begin(), pd.shape.end(), 1, 
+      [](size_t a, size_t b) { return a * b; }
+    );
+    
+    if (name.find("proj") != std::string::npos) {
+      projection_params[name] = params;
+    }
+    else if (name.find("encoders1") != std::string::npos) {
+      encoder1_params += params;
+    }
+    else if (name.find("encoders2") != std::string::npos) {
+      encoder2_params += params;
+    }
+    total_params += params;
+  }
+
+  // Calculate component params
+  const size_t attn_per_layer = 4 * D_model * D_model;
+  const size_t ffw_per_layer = D_model * FF_hidden_dim * 2;
+  const size_t ffb_per_layer = FF_hidden_dim + D_model;
+
+  // Print summary
+  std::cout << "\nModel Summary                 \n";
+  std::cout << "==============================\n";
+  std::cout << "Dimensions:\n";
+  std::cout << "  D_model:       " << D_model << "\n";
+  std::cout << "  FF_hidden_dim: " << FF_hidden_dim << "\n";
+  std::cout << "  D_in:          " << D_in << "\n";
+  std::cout << "  D_emb:         " << D_emb << "\n";
+  std::cout << "  Encoder1:      " << num_encoder1 << " layers\n";
+  std::cout << "  Encoder2:      " << num_encoder2 << " layers\n";
+  std::cout << "==========================\n\n";
+
+  std::cout << "1. Projections\n";
+  std::cout << "==========================\n";
+  std::cout << std::setw(25) << std::left << "Name" 
+            << std::setw(15) << "Shape" 
+            << "Params\n";
+  std::cout << "==========================\n";
+  for (const auto& [name, params] : projection_params) {
+    const auto& shape = param_map.at(name).shape;
+    std::string shape_str;
+    for (size_t i = 0; i < shape.size(); ++i) {
+      shape_str += std::to_string(shape[i]);
+      if (i != shape.size()-1) shape_str += "×";
+    }
+    std::cout << std::setw(25) << name 
+              << std::setw(15) << ("[" + shape_str + "]")
+              << params << "\n";
+  }
+  std::cout << "Total Projections: " 
+            << std::accumulate(projection_params.begin(), projection_params.end(), 0, 
+                             [](auto sum, const auto& p) { return sum + p.second; })
+            << "\n";
+  std::cout << "==========================\n\n";
+  std::cout << "2. Encoder1\n";
+  std::cout << "==========================\n";
+  std::cout << "Component       Per Layer    Total\n";
+  std::cout << "==========================\n";
+  std::cout << "Attention       " 
+            << std::setw(11) << attn_per_layer 
+            << std::setw(11) << attn_per_layer * num_encoder1 << "\n";
+  std::cout << "FF Weights      " 
+            << std::setw(11) << ffw_per_layer 
+            << std::setw(11) << ffw_per_layer * num_encoder1 << "\n";
+  std::cout << "FF Biases       " 
+            << std::setw(11) << ffb_per_layer 
+            << std::setw(11) << ffb_per_layer * num_encoder1 << "\n";
+  std::cout << "Actual Total:   " 
+            << std::setw(22) << encoder1_params << "\n";
+  std::cout << "==========================\n\n";
+
+  std::cout << "3. Encoder2\n";
+  std::cout << "==========================\n";
+  std::cout << "Component       Per Layer    Total\n";
+  std::cout << "==========================\n";
+  std::cout << "Attention       " 
+            << std::setw(11) << attn_per_layer 
+            << std::setw(11) << attn_per_layer * num_encoder2 << "\n";
+  std::cout << "FF Weights      " 
+            << std::setw(11) << ffw_per_layer 
+            << std::setw(11) << ffw_per_layer * num_encoder2 << "\n";
+  std::cout << "FF Biases       " 
+            << std::setw(11) << ffb_per_layer 
+            << std::setw(11) << ffb_per_layer * num_encoder2 << "\n";
+  std::cout << "Actual Total:   " 
+            << std::setw(22) << encoder2_params << "\n";
+  std::cout << "==========================\n\n";
+
+  std::cout << "Grand Total\n";
+  std::cout << "==========================\n";
+  std::cout << "Projections:  " << std::setw(10) << projection_params.begin()->second << "\n";
+  std::cout << "Encoder1:     " << std::setw(10) << encoder1_params << "\n";
+  std::cout << "Encoder2:     " << std::setw(10) << encoder2_params << "\n";
+  std::cout << "-----------------------------\n";
+  std::cout << "Total:        " << std::setw(10) << total_params << "\n";
+  std::cout << "==========================\n\n";
 }
 
 // ------------------------------------------------------------
@@ -1810,27 +2127,6 @@ static std::vector<std::vector<float>> feedForward(
   //const size_t D = seq[0].size();
   //const size_t H = 2 * D; // arbitrary
 
-  static std::mt19937 rng(123);
-  std::uniform_real_distribution<float> dist(-0.1f, 0.1f);
-
-  // We define W1: [D x H], b1: [H], W2: [H x D], b2: [D]
-  auto randomMatrix = [&](size_t rows, size_t cols) {
-    std::vector<std::vector<float>> mat(rows, std::vector<float>(cols, 0.0f));
-    for (size_t r = 0; r < rows; r++) {
-      for (size_t c = 0; c < cols; c++) {
-        mat[r][c] = dist(rng);
-      }
-    }
-    return mat;
-  };
-
-  auto randomVector = [&](size_t size) {
-    std::vector<float> vec(size, 0.0f);
-    for (size_t i = 0; i < size; i++) {
-      vec[i] = dist(rng);
-    }
-    return vec;
-  };
 
   //std::vector<std::vector<float>> W1 = randomMatrix(D, H);
   //std::vector<std::vector<float>> W2 = randomMatrix(H, D);
@@ -2100,19 +2396,6 @@ static Eigen::MatrixXf eigenSelfAttention(
   size_t Dh = D / num_heads;
 
 
-  // Random Wq, Wk, Wv of shape [D x D].
-  static std::mt19937 rng(42);
-  std::uniform_real_distribution<float> dist(-0.1f, 0.1f);
-
-  auto randomMatrix = [&](int r, int c){
-    Eigen::MatrixXf m(r,c);
-    for(int i=0; i<r; i++){
-      for(int j=0; j<c; j++){
-        m(i,j) = dist(rng);
-      }
-    }
-    return m;
-  };
 
   // Wq,Wk,Wv => [D x D]
   //Eigen::MatrixXf Wq = randomMatrix(D,D);
