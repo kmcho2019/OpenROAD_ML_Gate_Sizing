@@ -373,7 +373,7 @@ class MLGateSizer : public sta::dbStaState
       int num_encoder_layers,
 			int num_encoder_layers_2);
 
-  // Eigen-based version, more efficient
+  // Eigen-based version, more efficient (non input weights use random weights)
   std::vector<std::vector<std::vector<float>>> runTransformerEigen(
       const std::vector<std::vector<std::vector<float>>>& data_array_1,
 			const std::vector<std::vector<std::vector<float>>>& data_array_2,
@@ -386,6 +386,21 @@ class MLGateSizer : public sta::dbStaState
       size_t FF_hidden_dim,
       int num_encoder_layers,
 			int num_encoder_layers_2);
+
+  // Eigen-based version, more efficient
+  std::vector<std::vector<std::vector<float>>> runTransformerEigen(
+      const std::vector<std::vector<std::vector<float>>>& data_array_1,
+			const std::vector<std::vector<std::vector<float>>>& data_array_2,
+      int num_heads,
+      size_t N,
+      size_t L,
+      size_t D_in,
+			size_t D_emb,
+      size_t D_model,
+      size_t FF_hidden_dim,
+      int num_encoder_layers,
+			int num_encoder_layers_2,
+			const TransformerWeights& weights);
 
   // Compare two transformer outputs for correctness
   bool compareOutputs(
