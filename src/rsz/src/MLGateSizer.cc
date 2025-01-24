@@ -861,14 +861,57 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     }
     // Test using loaded model if transformer_weights_ is not empty
     if (transformer_weights_.loaded) {
+
+      // Check if transformer_weights_ are loaded properly and actually contain the weights
+      // Iterate through the weights and print the shape of each weight
+      // Print projection matrices dimensions
+      std::cout << "Projection Matrices:" << std::endl;
+      std::cout << "W_in1: " << transformer_weights_.W_in1.rows() << "x" << transformer_weights_.W_in1.cols() << std::endl;
+      std::cout << "W_in2: " << transformer_weights_.W_in2.rows() << "x" << transformer_weights_.W_in2.cols() << std::endl;
+      std::cout << "W_out: " << transformer_weights_.W_out.rows() << "x" << transformer_weights_.W_out.cols() << std::endl;
+
+      // Print encoder1 weights dimensions (6 layers)
+      for (int layer = 0; layer < num_encoder_layers; layer++) {
+          std::cout << "\nEncoder1 Layer " << layer << ":" << std::endl;
+          std::cout << "Wq: " << transformer_weights_.encoder1_0_Wq_1[layer].rows() << "x" 
+                    << transformer_weights_.encoder1_0_Wq_1[layer].cols() << std::endl;
+          std::cout << "Wk: " << transformer_weights_.encoder1_0_Wk_1[layer].rows() << "x"
+                    << transformer_weights_.encoder1_0_Wk_1[layer].cols() << std::endl;
+          std::cout << "Wv: " << transformer_weights_.encoder1_0_Wv_1[layer].rows() << "x"
+                    << transformer_weights_.encoder1_0_Wv_1[layer].cols() << std::endl;
+          std::cout << "FF_W1: " << transformer_weights_.encoder1_0_FF_W1_1[layer].rows() << "x"
+                    << transformer_weights_.encoder1_0_FF_W1_1[layer].cols() << std::endl;
+          std::cout << "FF_b1: " << transformer_weights_.encoder1_0_FF_b1_1[layer].size() << std::endl;
+          std::cout << "FF_W2: " << transformer_weights_.encoder1_0_FF_W2_1[layer].rows() << "x"
+                    << transformer_weights_.encoder1_0_FF_W2_1[layer].cols() << std::endl;
+          std::cout << "FF_b2: " << transformer_weights_.encoder1_0_FF_b2_1[layer].size() << std::endl;
+      }
+
+      // Print encoder2 weights dimensions (2 layers)
+      for (int layer = 0; layer < num_encoder_layers_2; layer++) {
+          std::cout << "\nEncoder2 Layer " << layer << ":" << std::endl;
+          std::cout << "Wq: " << transformer_weights_.encoder2_0_Wq_2[layer].rows() << "x"
+                    << transformer_weights_.encoder2_0_Wq_2[layer].cols() << std::endl;
+          std::cout << "Wk: " << transformer_weights_.encoder2_0_Wk_2[layer].rows() << "x"
+                    << transformer_weights_.encoder2_0_Wk_2[layer].cols() << std::endl;
+          std::cout << "Wv: " << transformer_weights_.encoder2_0_Wv_2[layer].rows() << "x"
+                    << transformer_weights_.encoder2_0_Wv_2[layer].cols() << std::endl;
+          std::cout << "FF_W1: " << transformer_weights_.encoder2_0_FF_W1_2[layer].rows() << "x"
+                    << transformer_weights_.encoder2_0_FF_W1_2[layer].cols() << std::endl;
+          std::cout << "FF_b1: " << transformer_weights_.encoder2_0_FF_b1_2[layer].size() << std::endl;
+          std::cout << "FF_W2: " << transformer_weights_.encoder2_0_FF_W2_2[layer].rows() << "x"
+                    << transformer_weights_.encoder2_0_FF_W2_2[layer].cols() << std::endl;
+          std::cout << "FF_b2: " << transformer_weights_.encoder2_0_FF_b2_2[layer].size() << std::endl;
+      }
+
       start = std::chrono::steady_clock::now();
       auto loaded_eigen_output = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, D_out, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2, transformer_weights_);
       end = std::chrono::steady_clock::now();
 
-      auto loaded_naive_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      auto loaded_eigen_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
-      std::cout << "Loaded Eigen  time: " << loaded_naive_us << " us   => "
-                << (1e6 * double(total_tokens) / double(loaded_naive_us))
+      std::cout << "Loaded Eigen  time: " << loaded_eigen_us << " us   => "
+                << (1e6 * double(total_tokens) / double(loaded_eigen_us))
                 << " tokens/sec\n";
     }
 
@@ -1256,6 +1299,11 @@ bool MLGateSizer::fillEigenMatrix(const ParamData& pd,
         return false;
     }
 
+    // Debugging
+    //std::cout << "Param shape: [" << pd.shape[0] << "x" << pd.shape[1] << "]\n";
+    //std::cout << "Eigen shape: [" << mat.rows() << "x" << mat.cols() << "]\n";
+    //std::cout << "Data size: " << pd.values.size() << "\n";
+
     // The shape from the file
     size_t rows = pd.shape[0];
     size_t cols = pd.shape[1];
@@ -1293,10 +1341,11 @@ bool MLGateSizer::fillEigenMatrix(const ParamData& pd,
         }
 
         // Fill: interpret the original data as if it’s transposed
-        // The element mat(r,c) = pd.values[c * rows + r]
+        // mat(r, c) = param(c, r), which in flattened row-major is param[c * cols + r].
         for (int r = 0; r < mat.rows(); r++) {
             for (int c = 0; c < mat.cols(); c++) {
-                mat(r, c) = pd.values[ static_cast<size_t>(c) * rows + r ];
+              // 'cols' here is pd.shape[1], i.e. the original param's "columns".
+              mat(r, c) = pd.values[ static_cast<size_t>(c) * cols + r ];
             }
         }
     }
@@ -1436,13 +1485,36 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
           logger_->error(utl::RSZ, 5002, "Missing param {}", name);
           return;
       }
+
+      const ParamData& pd = it->second;
+      bool transpose = true;
+
+      // Determine target dimensions based on transpose flag
+      int target_rows = transpose ? pd.shape[1] : pd.shape[0];
+      int target_cols = transpose ? pd.shape[0] : pd.shape[1];
       
+      // Debugging
+      //std::cout << "Loading " << name << " with shape [" << target_rows << "x" << target_cols << "]\n";
+      //std::cout << "Data size: " << pd.values.size() << "\n";
+
       if (name == "proj_in1.weight") {
-          fillEigenMatrix(it->second, transformer_weights_.W_in1, true, errMsg);
+        transformer_weights_.W_in1.resize(target_rows, target_cols);
+        if (!fillEigenMatrix(pd, transformer_weights_.W_in1, transpose, errMsg)) {
+          logger_->error(utl::RSZ, 5007, "Failed to fill {}: {}", name, errMsg);
+          return;
+        }
       } else if (name == "proj_in2.weight") {
-          fillEigenMatrix(it->second, transformer_weights_.W_in2, true, errMsg);
+        transformer_weights_.W_in2.resize(target_rows, target_cols);
+        if (!fillEigenMatrix(pd, transformer_weights_.W_in2, transpose, errMsg)) {
+          logger_->error(utl::RSZ, 5007, "Failed to fill {}: {}", name, errMsg);
+          return;
+        }
       } else if (name == "proj_out.weight") {
-          fillEigenMatrix(it->second, transformer_weights_.W_out, true, errMsg);
+        transformer_weights_.W_out.resize(target_rows, target_cols);
+        if (!fillEigenMatrix(pd, transformer_weights_.W_out, transpose, errMsg)) {
+          logger_->error(utl::RSZ, 5007, "Failed to fill {}: {}", name, errMsg);
+          return;
+        }          
       }
     }
     // Determine the max layer indices from the keys in param_map.
@@ -1519,14 +1591,40 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
               return;
           }
           
+          const ParamData& pd = it->second;
+          bool transpose = true;
+          int target_rows = transpose ? pd.shape[1] : pd.shape[0];
+          int target_cols = transpose ? pd.shape[0] : pd.shape[1];
+
+          // Debugging
+          //std::cout << "Loading " << base + w << " with shape [" << target_rows << "x" << target_cols << "]\n";
+          //std::cout << "Data size: " << pd.values.size() << "\n";
+
+
           if (w.find("Wq") != std::string::npos) {
-              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wq_1[layer], true, errMsg);
+            transformer_weights_.encoder1_0_Wq_1[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_Wq_1[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d Wq: %s", layer, errMsg);
+              return;
+            }
           } else if (w.find("Wk") != std::string::npos) {
-              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wk_1[layer], true, errMsg);
+            transformer_weights_.encoder1_0_Wk_1[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_Wk_1[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d Wk: %s", layer, errMsg);
+              return;
+            }
           } else if (w.find("Wv") != std::string::npos) {
-              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wv_1[layer], true, errMsg);
+            transformer_weights_.encoder1_0_Wv_1[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_Wv_1[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d Wv: %s", layer, errMsg);
+              return;
+            }
           } else if (w.find("Wo") != std::string::npos) {
-              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_Wo_1[layer], true, errMsg);
+            transformer_weights_.encoder1_0_Wo_1[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_Wo_1[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d Wo: %s", layer, errMsg);
+              return;
+            }              
           }
         }
         
@@ -1541,15 +1639,43 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
             logger_->error(utl::RSZ, 5004, "Missing encoder1 FF weight {}", base + w);
             return;
           }
+
+          const ParamData& pd = it->second;
+
+          // Debugging
+          //std::cout << "Loading " << base + w << " with shape [" << pd.shape[0] << "]\n";
+          //std::cout << "Data size: " << pd.values.size() << "\n";
           
           if (w.find("net.0.weight") != std::string::npos) {
-              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_FF_W1_1[layer], true, errMsg);
+            bool transpose = true;
+            int target_rows = transpose ? pd.shape[1] : pd.shape[0];
+            int target_cols = transpose ? pd.shape[0] : pd.shape[1];
+            transformer_weights_.encoder1_0_FF_W1_1[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_FF_W1_1[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d FF_W1: %s", layer, errMsg);
+              return;
+            }
           } else if (w.find("net.0.bias") != std::string::npos) {
-              fillEigenVector(it->second, transformer_weights_.encoder1_0_FF_b1_1[layer], errMsg);
+            transformer_weights_.encoder1_0_FF_b1_1[layer].resize(pd.shape[0]);
+            if (!fillEigenVector(pd, transformer_weights_.encoder1_0_FF_b1_1[layer], errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d FF_b1: %s", layer, errMsg);
+              return;
+            }
           } else if (w.find("net.2.weight") != std::string::npos) {
-              fillEigenMatrix(it->second, transformer_weights_.encoder1_0_FF_W2_1[layer], true, errMsg);
+            bool transpose = true;
+            int target_rows = transpose ? pd.shape[1] : pd.shape[0];
+            int target_cols = transpose ? pd.shape[0] : pd.shape[1];
+            transformer_weights_.encoder1_0_FF_W2_1[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_FF_W2_1[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d FF_W2: %s", layer, errMsg);
+              return;
+            }
           } else if (w.find("net.2.bias") != std::string::npos) {
-              fillEigenVector(it->second, transformer_weights_.encoder1_0_FF_b2_1[layer], errMsg);
+            transformer_weights_.encoder1_0_FF_b2_1[layer].resize(pd.shape[0]);
+            if (!fillEigenVector(pd, transformer_weights_.encoder1_0_FF_b2_1[layer], errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d FF_b2: %s", layer, errMsg);
+              return;
+            }
           }
         }
     }
@@ -1569,15 +1695,43 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
             logger_->error(utl::RSZ, 5005, "Missing encoder2 attention weight {}", base + w);
             return;
           }
+
+          const ParamData& pd = it->second;
+          bool transpose = true;
+          int target_rows = transpose ? pd.shape[1] : pd.shape[0];
+          int target_cols = transpose ? pd.shape[0] : pd.shape[1];
+
+          // Debugging
+          //std::cout << "Loading " << base + w << " with shape [" << target_rows << "x" << target_cols << "]\n";
+          //std::cout << "Data size: " << pd.values.size() << "\n";
           
           if (w.find("Wq") != std::string::npos) {
-            fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wq_2[layer], true, errMsg);
-          } else if (w.find("Wk") != std::string::npos) {
-            fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wk_2[layer], true, errMsg);
-          } else if (w.find("Wv") != std::string::npos) {
-            fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wv_2[layer], true, errMsg);
-          } else if (w.find("Wo") != std::string::npos) {
-            fillEigenMatrix(it->second, transformer_weights_.encoder2_0_Wo_2[layer], true, errMsg);
+            transformer_weights_.encoder2_0_Wq_2[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_Wq_2[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d Wq: %s", layer, errMsg);
+              return;
+            }
+          } 
+          else if (w.find("Wk") != std::string::npos) {
+            transformer_weights_.encoder2_0_Wk_2[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_Wk_2[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d Wk: %s", layer, errMsg);
+              return;
+            }
+          } 
+          else if (w.find("Wv") != std::string::npos) {
+            transformer_weights_.encoder2_0_Wv_2[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_Wv_2[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d Wv: %s", layer, errMsg);
+              return;
+            }
+          } 
+          else if (w.find("Wo") != std::string::npos) {
+            transformer_weights_.encoder2_0_Wo_2[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_Wo_2[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d Wo: %s", layer, errMsg);
+              return;
+            }
           }
         }
         
@@ -1591,15 +1745,46 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
               logger_->error(utl::RSZ, 5006, "Missing encoder2 FF weight {}", base + w);
               return;
           }
+
+          const ParamData& pd = it->second;
+
+          // Debugging
+          //std::cout << "Loading " << base + w << " with shape [" << pd.shape[0] << "]\n";
+          //std::cout << "Data size: " << pd.values.size() << "\n";
           
           if (w.find("net.0.weight") != std::string::npos) {
-              fillEigenMatrix(it->second, transformer_weights_.encoder2_0_FF_W1_2[layer], true, errMsg);
-          } else if (w.find("net.0.bias") != std::string::npos) {
-              fillEigenVector(it->second, transformer_weights_.encoder2_0_FF_b1_2[layer], errMsg);
-          } else if (w.find("net.2.weight") != std::string::npos) {
-              fillEigenMatrix(it->second, transformer_weights_.encoder2_0_FF_W2_2[layer], true, errMsg);
-          } else if (w.find("net.2.bias") != std::string::npos) {
-              fillEigenVector(it->second, transformer_weights_.encoder2_0_FF_b2_2[layer], errMsg);
+            bool transpose = true;
+            int target_rows = transpose ? pd.shape[1] : pd.shape[0];
+            int target_cols = transpose ? pd.shape[0] : pd.shape[1];
+            transformer_weights_.encoder2_0_FF_W1_2[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_FF_W1_2[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d FF_W1: %s", layer, errMsg);
+              return;
+            }
+          } 
+          else if (w.find("net.0.bias") != std::string::npos) {
+            transformer_weights_.encoder2_0_FF_b1_2[layer].resize(pd.shape[0]);
+            if (!fillEigenVector(pd, transformer_weights_.encoder2_0_FF_b1_2[layer], errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d FF_b1: %s", layer, errMsg);
+              return;
+            }
+          } 
+          else if (w.find("net.2.weight") != std::string::npos) {
+            bool transpose = true;
+            int target_rows = transpose ? pd.shape[1] : pd.shape[0];
+            int target_cols = transpose ? pd.shape[0] : pd.shape[1];
+            transformer_weights_.encoder2_0_FF_W2_2[layer].resize(target_rows, target_cols);
+            if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_FF_W2_2[layer], transpose, errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d FF_W2: %s", layer, errMsg);
+              return;
+            }
+          } 
+          else if (w.find("net.2.bias") != std::string::npos) {
+            transformer_weights_.encoder2_0_FF_b2_2[layer].resize(pd.shape[0]);
+            if (!fillEigenVector(pd, transformer_weights_.encoder2_0_FF_b2_2[layer], errMsg)) {
+              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d FF_b2: %s", layer, errMsg);
+              return;
+            }
           }
         }
     }
@@ -2895,12 +3080,12 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
   // Check if D_model is divisible by num_heads
   assert(D_model % num_heads == 0 && "D_model must be divisible by num_heads");
 
-
+  //std::cout << "Debug 1" << std::endl;
   // Allocate output (N x L/2 x D_out) or (N x L/2 x num_classes)
   std::vector<std::vector<std::vector<float>>> output(N,
       std::vector<std::vector<float>>(L2, std::vector<float>(D_out, 0.f)));
   
-  
+  //std::cout << "Debug 2" << std::endl;
   // For each sequence in the batch:
   for (size_t n = 0; n < N; n++) {
     // current seq: [L x D_in]
@@ -2910,11 +3095,11 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
         seq(l, d) = data_array_1[n][l][d];
       }
     }
-
+    //std::cout << "Debug 3" << std::endl;
     // First encoder: self-attention
     // 1) Project seq => [L x D_model]
     Eigen::MatrixXf seq_proj = seq * weights.W_in1;
-
+    //std::cout << "Debug 4" << std::endl;
     // 2) Run through encoder blocks
     Eigen::MatrixXf x = seq_proj; // shape [L x D_model]
     for (int layer = 0; layer < num_encoder_layers; layer++) {
@@ -2932,7 +3117,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
       // (f) LayerNorm
       eigenLayerNorm(x);
     }
-
+    //std::cout << "Debug 5" << std::endl;
     // Second encoder: cross-attention
     // 1) Project seq => [L/2 x D_model]
     Eigen::MatrixXf seq_proj2(L2, D_emb);
@@ -2941,7 +3126,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
         seq_proj2(l, d) = data_array_2[n][l][d];
       }
     }
-
+    //std::cout << "Debug 6" << std::endl;
     // [L/2 x D_emb] x [D_emb x D_model] => [L/2 x D_model]
     Eigen::MatrixXf x2 = seq_proj2 * weights.W_in2;
     for (int layer_2 = 0; layer_2 < num_encoder_layers_2; layer_2++) {
@@ -2962,7 +3147,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
 
 
-
+    //std::cout << "Debug 7" << std::endl;
     // x is now [L/2 x D_model]. Project back to [L/2 x D_out] or [L/2 x num_classes]
     Eigen::MatrixXf final_out = x2 * weights.W_out;
 
