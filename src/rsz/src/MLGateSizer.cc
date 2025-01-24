@@ -2096,10 +2096,10 @@ static Eigen::MatrixXf eigenSelfAttention(
   int num_heads,
   size_t D,
   size_t L,
-  Eigen::MatrixXf& Wq,
-  Eigen::MatrixXf& Wk,
-  Eigen::MatrixXf& Wv,
-  Eigen::MatrixXf& Wo)
+  const Eigen::MatrixXf& Wq,
+  const Eigen::MatrixXf& Wk,
+  const Eigen::MatrixXf& Wv,
+  const Eigen::MatrixXf& Wo)
 {
   // seq shape: [L x D]
   // Return shape: [L x D]
@@ -2227,10 +2227,10 @@ static Eigen::MatrixXf eigenCrossAttention(
     size_t D,
     size_t LQ,
     size_t LM,
-    Eigen::MatrixXf & Wq,
-    Eigen::MatrixXf & Wk,
-    Eigen::MatrixXf & Wv,
-    Eigen::MatrixXf & Wo)
+    const Eigen::MatrixXf & Wq,
+    const Eigen::MatrixXf & Wk,
+    const Eigen::MatrixXf & Wv,
+    const Eigen::MatrixXf & Wo)
 {
     // 1) Project Q from Qseq, K and V from Mseq:
     //    Qseq: [LQ x D], Mseq: [LM x D]
@@ -2318,10 +2318,10 @@ static Eigen::MatrixXf eigenFF(
   size_t L,
   size_t D,
   size_t H,
-  Eigen::MatrixXf& W1,
-  Eigen::MatrixXf& W2,
-  Eigen::VectorXf& b1,
-  Eigen::VectorXf& b2)
+  const Eigen::MatrixXf& W1,
+  const Eigen::MatrixXf& W2,
+  const Eigen::VectorXf& b1,
+  const Eigen::VectorXf& b2)
 {
   // seq: L x D, do 2D hidden layer
   //int L = seq.rows();
@@ -2425,7 +2425,7 @@ static void eigenLayerNorm(Eigen::MatrixXf& seq, float eps=1e-5f)
 // For Gate sizing need to take encoder output and pass it through a classification head.
 // Each class corresponding to the libcell.
 // --------------------------------------------------------------------
-std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
+std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  // Random weights
     const std::vector<std::vector<std::vector<float>>>& data_array_1, // shape [N x L   x D_in]
     const std::vector<std::vector<std::vector<float>>>& data_array_2, // shape [N x L/2 x D_emb]
     int num_heads,
@@ -2457,6 +2457,10 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
 
   // Number of encoder layers
   //const int num_encoder_layers = 2;
+
+  // Check if D_model is divisible by num_heads
+  assert(D_model % num_heads == 0 && "D_model must be divisible by num_heads");
+
 
   // We will random-initialize projection weights:
   static std::mt19937 rng(999);
@@ -2586,6 +2590,129 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(
   // Return shape: [N x L/2 x D_in]
   return output;
 }
+
+
+std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  // Uses given weights
+    const std::vector<std::vector<std::vector<float>>>& data_array_1, // shape [N x L   x D_in]
+    const std::vector<std::vector<std::vector<float>>>& data_array_2, // shape [N x L/2 x D_emb]
+    int num_heads,
+    size_t N,
+    size_t L,
+    size_t D_in,
+    size_t D_emb,
+    size_t D_model,
+    size_t FF_hidden_dim,
+    int num_encoder_layers,
+    int num_encoder_layers_2,
+    const TransformerWeights& weights)
+{
+  //size_t N = data_array_1.size();
+  if (N == 0) return {};
+
+  //size_t L = data_array_1[0].size();
+  if (L == 0) return {};
+
+  size_t L2 = L / 2;
+
+  // Original input dimension
+  //size_t D_in = data_array_1[0][0].size();
+
+  // Decide how many heads we want
+  //const int num_heads = 4;
+
+  // Decide a model dimension that is divisible by num_heads
+  //size_t D_model = 64;
+
+  // Number of encoder layers
+  //const int num_encoder_layers = 2;
+
+  // Check if D_model is divisible by num_heads
+  assert(D_model % num_heads == 0 && "D_model must be divisible by num_heads");
+
+
+  // Allocate output (N x L/2 x D_in) or (N x L/2 x num_classes)
+  std::vector<std::vector<std::vector<float>>> output(N,
+      std::vector<std::vector<float>>(L2, std::vector<float>(D_in, 0.f)));
+  
+  
+  // For each sequence in the batch:
+  for (size_t n = 0; n < N; n++) {
+    // current seq: [L x D_in]
+    Eigen::MatrixXf seq(L, D_in);
+    for (size_t l = 0; l < L; l++) {
+      for (size_t d = 0; d < D_in; d++) {
+        seq(l, d) = data_array_1[n][l][d];
+      }
+    }
+
+    // First encoder: self-attention
+    // 1) Project seq => [L x D_model]
+    Eigen::MatrixXf seq_proj = seq * weights.W_in1;
+
+    // 2) Run through encoder blocks
+    Eigen::MatrixXf x = seq_proj; // shape [L x D_model]
+    for (int layer = 0; layer < num_encoder_layers; layer++) {
+      // (a) Multi-head self-attention
+      auto attn_out = eigenSelfAttention(x, num_heads, D_model, L, weights.encoder1_0_Wq_1[layer], weights.encoder1_0_Wk_1[layer], weights.encoder1_0_Wv_1[layer], weights.encoder1_0_Wo_1[layer]);
+      // (b) Residual
+      x += attn_out;
+      // (c) LayerNorm
+      eigenLayerNorm(x);
+
+      // (d) FeedForward
+      auto ff_out = eigenFF(x, L, D_model, FF_hidden_dim, weights.encoder1_0_FF_W1_1[layer], weights.encoder1_0_FF_W2_1[layer], weights.encoder1_0_FF_b1_1[layer], weights.encoder1_0_FF_b2_1[layer]);
+      // (e) Residual
+      x += ff_out;
+      // (f) LayerNorm
+      eigenLayerNorm(x);
+    }
+
+    // Second encoder: cross-attention
+    // 1) Project seq => [L/2 x D_model]
+    Eigen::MatrixXf seq_proj2(L2, D_emb);
+    for (size_t l = 0; l < L2; l++) {
+      for (size_t d = 0; d < D_emb; d++) {
+        seq_proj2(l, d) = data_array_2[n][l][d];
+      }
+    }
+
+    // [L/2 x D_emb] x [D_emb x D_model] => [L/2 x D_model]
+    Eigen::MatrixXf x2 = seq_proj2 * weights.W_in2;
+    for (int layer_2 = 0; layer_2 < num_encoder_layers_2; layer_2++) {
+      // (a) Multi-head cross-attention
+      auto attn_out2 = eigenCrossAttention(x2, x, num_heads, D_model, L2, L, weights.encoder2_0_Wq_2[layer_2], weights.encoder2_0_Wk_2[layer_2], weights.encoder2_0_Wv_2[layer_2], weights.encoder2_0_Wo_2[layer_2]);
+      // (b) Residual
+      x2 += attn_out2;
+      // (c) LayerNorm
+      eigenLayerNorm(x2);
+
+      // (d) FeedForward
+      auto ff_out2 = eigenFF(x2, L2, D_model, FF_hidden_dim, weights.encoder2_0_FF_W1_2[layer_2], weights.encoder2_0_FF_W2_2[layer_2], weights.encoder2_0_FF_b1_2[layer_2], weights.encoder2_0_FF_b2_2[layer_2]);
+      // (e) Residual
+      x2 += ff_out2;
+      // (f) LayerNorm
+      eigenLayerNorm(x2);
+    }
+
+
+
+
+    // x is now [L/2 x D_model]. Project back to [L/2 x D_in] or [L/2 x num_classes]
+    Eigen::MatrixXf final_out = x2 * weights.W_out;
+
+    // Store final_out in output[n]
+    for (size_t l = 0; l < L2; l++) {
+      for (size_t d = 0; d < D_in; d++) {
+        output[n][l][d] = final_out(l, d);
+      }
+    }
+  }
+
+
+  // Return shape: [N x L/2 x D_in]/ [N x L/2 x num_classes]
+  return output;
+}
+
 
 template <class Func>
 long long MLGateSizer::benchmark(Func&& func)
