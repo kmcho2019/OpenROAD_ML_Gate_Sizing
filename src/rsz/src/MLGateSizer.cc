@@ -748,6 +748,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     assert(L % 2 == 0 && "L must be even");
     // size_t L_2 = L/2;  // Half of the sequence length, corresponds to the 2nd encoder layer input sequence length (commented out as not used)
     size_t D_in = data_array[0][0].size();  // Input feature dimensions (17)
+    size_t D_out = 50; // Output feature dimensions (50), maximum number of classes
     size_t D_emb = embedding_size_; // Embedding dimensions (768)
     size_t D_model = 128;//64; // Transformer model hidden dimensions (64)
     size_t FF_hidden_dim = 4 * D_model; // Feedforward hidden dimensions (256)
@@ -760,8 +761,11 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     // - Q, K, V, O weights: (D_model x D_model) x 4
     // - FF weights: (D_model x FF_hidden_dim) x 2 + FF_hidden_dim + D_model
     // Projection for the 2nd encoder layer: (D_emb x D_model)
-    // Final Output Projection weights: (D_model x D_in) (optional consider switching to classification head, in that case D_in becomes the number of classes)
-    size_t model_params = ((D_model * D_model) * 4 + (D_model * FF_hidden_dim) * 2 + FF_hidden_dim + D_model) * (num_encoder_layers + num_encoder_layers_2) + (D_in * D_model) * 2 + D_emb * D_model;
+    // Final Output Projection weights: (D_model x D_out) (optional consider switching to classification head, in that case D_out becomes the number of classes)
+    size_t projection_param_num = D_in * D_model + D_emb * D_model + D_model * D_out;
+    size_t encoder_1_param_num = ((D_model * D_model) * 4 + (D_model * FF_hidden_dim) * 2 + FF_hidden_dim + D_model) * num_encoder_layers;
+    size_t encoder_2_param_num = ((D_model * D_model) * 4 + (D_model * FF_hidden_dim) * 2 + FF_hidden_dim + D_model) * num_encoder_layers_2;
+    size_t model_params = projection_param_num + encoder_1_param_num + encoder_2_param_num;
 
     // encoder_2_input input to 2nd encoder layer shape: (N, L/2, D_emb)
     // consists of the embeddings of the libcell type IDs
@@ -794,11 +798,11 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     */
     // 3) Actually store the outputs to compare correctness
     auto start = std::chrono::steady_clock::now();
-    auto out_naive  = runTransformer(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);
+    auto out_naive  = runTransformer(data_array, encoder_2_input, num_heads, N, L, D_in, D_out, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);
     auto end = std::chrono::steady_clock::now();
     auto naive_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     start = std::chrono::steady_clock::now();
-    auto out_eigen  = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);
+    auto out_eigen  = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, D_out, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);
     end = std::chrono::steady_clock::now();
     auto eigen_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     bool ok = compareOutputs(out_naive, out_eigen, 1e-3f);
@@ -807,7 +811,13 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     // total tokens processed: N*L
     size_t total_tokens = data_array.size() * data_array[0].size();
 
-    std::cout << "Model parameters: " << model_params << std::endl;
+
+
+    //std::cout << "Projection parameters: " << D_in << " x " << D_model << " + " << D_emb << " x " << D_model << " + " << D_model << " x " << D_out << " = " << projection_param_num << std::endl;
+    std::cout << "Projection parameters: " << projection_param_num << std::endl;
+    std::cout << "Encoder 1 parameters: " << encoder_1_param_num << std::endl;
+    std::cout << "Encoder 2 parameters: " << encoder_2_param_num << std::endl;
+    std::cout << "Total model parameters: " << model_params << std::endl;
 
     std::cout << "Total tokens: " << total_tokens << ": " << data_array.size() << "X" << data_array[0].size() << std::endl;
 
@@ -852,7 +862,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     // Test using loaded model if transformer_weights_ is not empty
     if (transformer_weights_.loaded) {
       start = std::chrono::steady_clock::now();
-      auto loaded_eigen_output = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2, transformer_weights_);
+      auto loaded_eigen_output = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, D_out, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2, transformer_weights_);
       end = std::chrono::steady_clock::now();
 
       auto loaded_naive_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
@@ -1606,6 +1616,7 @@ void MLGateSizer::printModelSummary(const std::unordered_map<std::string, ParamD
   size_t D_model = 0;
   size_t FF_hidden_dim = 0;
   size_t D_in = 0;
+  size_t D_out = 0;
   size_t D_emb = 0;
   bool dims_initialized = false;
 
@@ -1647,8 +1658,11 @@ void MLGateSizer::printModelSummary(const std::unordered_map<std::string, ParamD
       else if (name == "proj_in2.weight" && pd.shape.size() == 2) {
         D_emb = pd.shape[1];
       }
+      else if (name == "proj_out.weight" && pd.shape.size() == 2) {
+        D_out = pd.shape[0];
+      }
       
-      if (D_model && FF_hidden_dim && D_in && D_emb) {
+      if (D_model && FF_hidden_dim && D_in && D_emb && D_out) {
         dims_initialized = true;
       }
     }
@@ -1689,6 +1703,7 @@ void MLGateSizer::printModelSummary(const std::unordered_map<std::string, ParamD
   std::cout << "  D_model:       " << D_model << "\n";
   std::cout << "  FF_hidden_dim: " << FF_hidden_dim << "\n";
   std::cout << "  D_in:          " << D_in << "\n";
+  std::cout << "  D_out:         " << D_out << "\n";
   std::cout << "  D_emb:         " << D_emb << "\n";
   std::cout << "  Encoder1:      " << num_encoder1 << " layers\n";
   std::cout << "  Encoder2:      " << num_encoder2 << " layers\n";
@@ -2190,6 +2205,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
     size_t N,
     size_t L,
     size_t D_in,
+    size_t D_out,
     size_t D_emb,
     size_t D_model,
     size_t FF_hidden_dim,
@@ -2238,10 +2254,10 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
   };
 
   // If you want to map back to D_in:
-  // W_out: [D_model x D_in]
+  // W_out: [D_model x D_out]
   auto W_in  = randomMatrix(D_in, D_model);
   auto W_in2 = randomMatrix(D_emb, D_model);
-  auto W_out = randomMatrix(D_model, D_in);
+  auto W_out = randomMatrix(D_model, D_out);
 
   // Allocate Q, K, V, O projection matrices
   auto Wq = randomMatrix(D_model, D_model);
@@ -2261,7 +2277,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
 
   // Allocate output
   std::vector<std::vector<std::vector<float>>> output(N,
-      std::vector<std::vector<float>>(L2, std::vector<float>(D_in, 0.f)));
+      std::vector<std::vector<float>>(L2, std::vector<float>(D_out, 0.f)));
 
   // For each sequence in the batch:
   for (size_t n = 0; n < N; n++) {
@@ -2327,14 +2343,14 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
         x2 = ff_out2;
     }
 
-    // x2 is now [L/2 x D_model]. Project back to [L/2 x D_in]
+    // x2 is now [L/2 x D_model]. Project back to [L/2 x D_out]
     auto final_out = matMul(x2, W_out);
 
     // Store final_out in output[n]
-    output[n] = final_out; // shape [L/2 x D_in]
+    output[n] = final_out; // shape [L/2 x D_out]
   }
 
-  // Return shape: [N x L/2 x D_in]
+  // Return shape: [N x L/2 x D_out]
   return output;
 }
 
@@ -2680,6 +2696,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     size_t N,
     size_t L,
     size_t D_in,
+    size_t D_out,
     size_t D_emb,
     size_t D_model,
     size_t FF_hidden_dim,
@@ -2733,10 +2750,10 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
   };
 
   // If you want to map back to D_in:
-  // W_out: [D_model x D_in]
+  // W_out: [D_model x D_out]
   auto W_in  = randomMatrix(D_in, D_model);
   auto W_in2 = randomMatrix(D_emb, D_model);
-  auto W_out = randomMatrix(D_model, D_in);
+  auto W_out = randomMatrix(D_model, D_out);
 
   // Allocate Q, K, V, O projection matrices
   // Wq/Wk/Wv/Wo: [D_model x D_model]
@@ -2758,7 +2775,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
   // Allocate output
   std::vector<std::vector<std::vector<float>>> output(N,
-      std::vector<std::vector<float>>(L2, std::vector<float>(D_in, 0.f)));
+      std::vector<std::vector<float>>(L2, std::vector<float>(D_out, 0.f)));
   
   
   // For each sequence in the batch:
@@ -2823,19 +2840,19 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
 
 
-    // x is now [L/2 x D_model]. Project back to [L/2 x D_in]
+    // x is now [L/2 x D_model]. Project back to [L/2 x D_out]
     Eigen::MatrixXf final_out = x2 * W_out;
 
     // Store final_out in output[n]
     for (size_t l = 0; l < L2; l++) {
-      for (size_t d = 0; d < D_in; d++) {
+      for (size_t d = 0; d < D_out; d++) {
         output[n][l][d] = final_out(l, d);
       }
     }
   }
 
 
-  // Return shape: [N x L/2 x D_in]
+  // Return shape: [N x L/2 x D_out]
   return output;
 }
 
@@ -2847,6 +2864,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     size_t N,
     size_t L,
     size_t D_in,
+    size_t D_out,
     size_t D_emb,
     size_t D_model,
     size_t FF_hidden_dim,
@@ -2878,9 +2896,9 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
   assert(D_model % num_heads == 0 && "D_model must be divisible by num_heads");
 
 
-  // Allocate output (N x L/2 x D_in) or (N x L/2 x num_classes)
+  // Allocate output (N x L/2 x D_out) or (N x L/2 x num_classes)
   std::vector<std::vector<std::vector<float>>> output(N,
-      std::vector<std::vector<float>>(L2, std::vector<float>(D_in, 0.f)));
+      std::vector<std::vector<float>>(L2, std::vector<float>(D_out, 0.f)));
   
   
   // For each sequence in the batch:
@@ -2945,19 +2963,19 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
 
 
-    // x is now [L/2 x D_model]. Project back to [L/2 x D_in] or [L/2 x num_classes]
+    // x is now [L/2 x D_model]. Project back to [L/2 x D_out] or [L/2 x num_classes]
     Eigen::MatrixXf final_out = x2 * weights.W_out;
 
     // Store final_out in output[n]
     for (size_t l = 0; l < L2; l++) {
-      for (size_t d = 0; d < D_in; d++) {
+      for (size_t d = 0; d < D_out; d++) {
         output[n][l][d] = final_out(l, d);
       }
     }
   }
 
 
-  // Return shape: [N x L/2 x D_in]/ [N x L/2 x num_classes]
+  // Return shape: [N x L/2 x D_out]/ [N x L/2 x num_classes]
   return output;
 }
 
