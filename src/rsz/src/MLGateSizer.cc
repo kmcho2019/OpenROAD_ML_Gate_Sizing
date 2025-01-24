@@ -226,6 +226,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     if (libcell_to_id_.size() == 216) { // ASAP7
       loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/ASAP7_libcell_embeddings.bin", embedding_size);
       updateLibcellTypeEmbeddings();
+      loadWeights("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/transformer_params.bin"); // Load the transformer weights
   }
     else if (libcell_to_id_.size() == 135) {  // Nangate45
       loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/nangate45_libcell_embeddings.bin", embedding_size);
@@ -1155,7 +1156,7 @@ void MLGateSizer::updateLibcellTypeEmbeddings()
 // For a 2D param with shape [rows, cols], fill Eigen::MatrixXf:
 //   - If transpose_if_needed is false, expect pd.shape == mat.shape
 //   - If transpose_if_needed is true, expect pd.shape == [cols, rows] (Pytorch convention)
-bool fillEigenMatrix(const ParamData& pd,
+bool MLGateSizer::fillEigenMatrix(const ParamData& pd,
                      Eigen::MatrixXf& mat,
                      bool transpose_if_needed,
                      std::string& errMsg)
@@ -1216,7 +1217,7 @@ bool fillEigenMatrix(const ParamData& pd,
 
 
 // For a 1D param of shape [length], fill Eigen::VectorXf, etc.
-bool fillEigenVector(const ParamData& pd,
+bool MLGateSizer::fillEigenVector(const ParamData& pd,
                      Eigen::VectorXf& vec,
                      std::string& errMsg)
 {
@@ -1243,7 +1244,7 @@ bool fillEigenVector(const ParamData& pd,
 
 
 // Example function that loads all parameters into a name->ParamData map
-bool loadModelWeightsRobust(const std::string& filename, 
+bool MLGateSizer::loadModelWeightsRobust(const std::string& filename, 
                             std::unordered_map<std::string, ParamData>& out_map,
                             std::string& errMsg)
 {
