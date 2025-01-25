@@ -3153,6 +3153,14 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     // x is now [L/2 x D_model]. Project back to [L/2 x D_out]
     Eigen::MatrixXf final_out = x2 * W_out;
 
+    // Conduct softmax over D_out dimension to get class probabilities
+    for (size_t l = 0; l < L2; l++) {
+      float max_val = final_out.row(l).maxCoeff();
+      final_out.row(l) = (final_out.row(l).array() - max_val).exp();
+      float sum_ = final_out.row(l).sum();
+      final_out.row(l) /= sum_;
+    }
+
     // Store final_out in output[n]
     for (size_t l = 0; l < L2; l++) {
       for (size_t d = 0; d < D_out; d++) {
@@ -3275,6 +3283,14 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     //std::cout << "Debug 7" << std::endl;
     // x is now [L/2 x D_model]. Project back to [L/2 x D_out] or [L/2 x num_classes]
     Eigen::MatrixXf final_out = x2 * weights.W_out;
+
+    // Conduct softmax over D_out dimension to get class probabilities
+    for (size_t l = 0; l < L2; l++) {
+      float max_val = final_out.row(l).maxCoeff();
+      final_out.row(l) = (final_out.row(l).array() - max_val).exp();
+      float sum_ = final_out.row(l).sum();
+      final_out.row(l) /= sum_;
+    }
 
     // Store final_out in output[n]
     for (size_t l = 0; l < L2; l++) {
