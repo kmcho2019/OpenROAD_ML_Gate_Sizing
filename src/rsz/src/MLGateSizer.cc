@@ -770,6 +770,19 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     // encoder_2_input input to 2nd encoder layer shape: (N, L/2, D_emb)
     // consists of the embeddings of the libcell type IDs
     // from every other libcell type ID in the libcell_type_ids use the corresponding embedding from libcell_type_id_to_embedding_
+    std::vector<std::vector<int>> encoder_2_input_libcell_type_ids;
+    encoder_2_input_libcell_type_ids = std::vector<std::vector<int>>(N, std::vector<int>(L/2, -1));
+
+    // Fill in the encoder_2_input_libcell_type_ids with every other libcell type ID from libcell_type_ids
+    // As the libcell_type_ids are in the shape (N, L) representing pin's libcell type, we need to extract every other libcell type ID to get the cell's libcell type ID
+    // Due to every 2 pin corresponds to a cell.
+    for (size_t i = 0; i < N; i++) {
+      for (size_t j = 0; j < L/2; j++) {
+        encoder_2_input_libcell_type_ids[i][j] = libcell_type_ids[i][j*2];
+      }
+    }
+
+
     std::vector<std::vector<std::vector<float>>> encoder_2_input;
     encoder_2_input = std::vector<std::vector<std::vector<float>>>(N, std::vector<std::vector<float>>(L/2, std::vector<float>(embedding_size_, 0.0)));
     for (size_t i = 0; i < N; i++) {
@@ -781,7 +794,67 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         }
       }
     }
-    
+
+    // Save the data_array, encoder_2_input, pin_ids, cell_ids, libcell_ids, libcell_type_ids to a binary file
+    // The data_array is saved as a 3D array, pin_ids, cell_ids, libcell_ids, libcell_type_ids are saved as 2D arrays
+    // The data_array is saved as a float32 array, pin_ids, cell_ids, libcell_ids, libcell_type_ids are saved as int32 arrays
+
+    // Save the 3D arrays
+    writeBinaryFile3DFloat("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/data_array.bin", data_array);
+    writeBinaryFile3DFloat("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/encoder_2_input.bin", encoder_2_input);
+    // Save the 2D arrays
+    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/pin_ids.bin", pin_ids);
+    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/cell_ids.bin", cell_ids);
+    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/libcell_ids.bin", libcell_ids);
+    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/libcell_type_ids.bin", libcell_type_ids);
+    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/encoder_2_input_libcell_type_ids.bin", encoder_2_input_libcell_type_ids);
+
+    // Generate the labels shape (N, L) for the transformer model integer classification labels corresponding to correct libcell ID for each cell
+    // Read .size file to get cell->libcell mapping
+    std::unordered_map<std::string, std::string> cell_name_to_libcell_name = readSizeFile("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/NV_NVDLA_partition_m.size");
+    std::unordered_map<int, int> cell_id_to_libcell_id;
+    for (const auto& [cell_name, libcell_name] : cell_name_to_libcell_name) {
+      // Lookup cell ID - skip if not found
+      auto cell_it = cell_name_to_id.find(cell_name);
+      if (cell_it == cell_name_to_id.end()) continue;
+
+      // Lookup libcell ID - skip if not found
+      auto libcell_it = libcell_to_id_.find(libcell_name);
+      if (libcell_it == libcell_to_id_.end()) continue;
+
+      // Only insert if both IDs exist
+      cell_id_to_libcell_id[cell_it->second] = libcell_it->second;
+    }
+    std::vector<std::vector<int>> labels; // (N, L/2) for each cell, the corresponding libcell's order within same type
+    // Example if libcells 1, 4, and 7 are the same type, then the labels for the cells are 0, 1, 2
+    // So if libcell 1 is the libcell in .size file, then the label for the cell is 0 and so on
+    // If the cell is not found in the libcell_to_id_ mapping, then the label is 0
+    // This is because the model is trained to predict within each libcell type.
+    labels = std::vector<std::vector<int>>(N, std::vector<int>(L/2, 0));
+    for (size_t i = 0; i < N; i++) {
+      for (size_t j = 0; j < L/2; j++) {
+        int cell_id = cell_ids[i][j*2];
+        // only perform lookup if the cell id is valid
+        if (cell_id_to_libcell_id.find(cell_id) != cell_id_to_libcell_id.end()) {
+          int libcell_id = cell_id_to_libcell_id[cell_id];
+          // Get the libcell type id
+          if (libcell_id_to_libcell_type_id_.find(libcell_id) != libcell_id_to_libcell_type_id_.end()) {
+            int libcell_type_id = libcell_id_to_libcell_type_id_[libcell_id];
+            // Find the index of the libcell_id within the type's vector
+            if (libcell_type_id_to_libcell_ids_.find(libcell_type_id) != libcell_type_id_to_libcell_ids_.end()) {
+                const std::vector<int>& libcells_of_type = libcell_type_id_to_libcell_ids_[libcell_type_id];
+                auto it = std::find(libcells_of_type.begin(), libcells_of_type.end(), libcell_id);
+                if (it != libcells_of_type.end()) {
+                  labels[i][j] = std::distance(libcells_of_type.begin(), it);
+                }
+            }
+          }
+        }
+      }
+    }
+    // Save the labels to a binary file
+    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/labels.bin", labels);
+
     //auto outputs = runTransformer(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);  // Run the transformer model
     //auto eigen_outputs = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);  // Run the transformer model using Eigen
 
@@ -928,7 +1001,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
 }
 
 
-void MLGateSizer::writeBinaryFile(const std::string& filename, 
+void MLGateSizer::writeBinaryFile3DFloat(const std::string& filename, 
                                  const std::vector<std::vector<std::vector<float>>>& data)
 {
     std::ofstream out(filename, std::ios::binary);
@@ -957,6 +1030,58 @@ void MLGateSizer::writeBinaryFile(const std::string& filename,
         logger_->error(utl::RSZ, 1002, "Error writing to file {}", filename);
     }
 }
+
+void MLGateSizer::writeBinaryFile2DInt(const std::string& filename, 
+                                 const std::vector<std::vector<int>>& data)
+{
+    std::ofstream out(filename, std::ios::binary);
+    if (!out) {
+        logger_->error(utl::RSZ, 1001, "Cannot open file {} for writing", filename);
+        return;
+    }
+
+    // Write dimensions
+    size_t N = data.size();
+    size_t L = N > 0 ? data[0].size() : 0;
+
+    out.write(reinterpret_cast<const char*>(&N), sizeof(size_t));
+    out.write(reinterpret_cast<const char*>(&L), sizeof(size_t));
+
+    // Write data in flattened format
+    for (const auto& seq : data) {
+        out.write(reinterpret_cast<const char*>(seq.data()), L * sizeof(int));
+    }
+
+    if (!out) {
+        logger_->error(utl::RSZ, 1002, "Error writing to file {}", filename);
+    }
+}
+
+// Read .size file to generate labels
+// .size format: libcell_name, libcell_type_id for each line of the file
+std::unordered_map<std::string, std::string> MLGateSizer::readSizeFile(const std::string& filename)
+{
+    std::unordered_map<std::string, std::string> libcell_to_type;
+    std::ifstream in(filename);
+    if (!in) {
+        logger_->error(utl::RSZ, 1003, "Cannot open file {} for reading", filename);
+        return libcell_to_type;
+    }
+
+    std::string line;
+    while (std::getline(in, line)) {
+        std::istringstream iss(line);
+        std::string libcell_name, libcell_type;
+        if (!(iss >> libcell_name >> libcell_type)) {
+            logger_->error(utl::RSZ, 1004, "Error reading line from file {}", filename);
+            return libcell_to_type;
+        }
+        libcell_to_type[libcell_name] = libcell_type;
+    }
+
+    return libcell_to_type;
+}
+
 
 void MLGateSizer::exportTypeEmbeddings(const std::string& filename)
 {

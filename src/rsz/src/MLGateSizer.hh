@@ -250,7 +250,7 @@ public:
 		
 private:
 		size_t findMaxSeqLen() {
-				size_t max_len = 0;
+				size_t max_len = 128; // Default max sequence length (can be adjusted)
 				for (const auto& seq : sequences_) {
 						max_len = std::max(max_len, seq.size());
 				}
@@ -433,9 +433,13 @@ class MLGateSizer : public sta::dbStaState
   // void resizewithML();
 
   // Binary file handling
-  void writeBinaryFile(const std::string& filename, const std::vector<std::vector<std::vector<float>>>& data);
-	void exportTypeEmbeddings(const std::string& filename);
+  void writeBinaryFile3DFloat(const std::string& filename, const std::vector<std::vector<std::vector<float>>>& data);
+  void writeBinaryFile2DInt(const std::string& filename, const std::vector<std::vector<int>>& data);
+  void exportTypeEmbeddings(const std::string& filename);
   std::vector<std::vector<std::vector<float>>> readBinaryFile(const std::string& filename);
+
+	// Read .size file to generate labels
+	std::unordered_map<std::string, std::string> readSizeFile(const std::string& filename);
 
   void generateLibcellOrdering(const std::vector<std::string>& libcells);
   void saveEmbeddingsBinary(const std::string& filename);
@@ -482,7 +486,7 @@ class MLGateSizer : public sta::dbStaState
 	
 	// Libcells and types Mapping
 	// Stores the libcells and their corresponding ids and types
-  std::vector<std::string> ordered_libcells_;
+  	std::vector<std::string> ordered_libcells_;
 	std::unordered_map<std::string, int> libcell_to_id_;
 	std::unordered_map<std::string, int> libcell_to_type_id_;
 	std::unordered_map<int, std::vector<int>> libcell_type_id_to_libcell_ids_;
