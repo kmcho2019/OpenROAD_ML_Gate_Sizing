@@ -234,7 +234,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       const std::string weight_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/transformer_params.bin";
       exportTypeEmbeddings(type_embedding_filename);
       loadWeights(weight_filename); // Load the transformer weights
-  }
+    }
     else if (libcell_to_id_.size() == 135) {  // Nangate45
       loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/nangate45_libcell_embeddings.bin", embedding_size);
       updateLibcellTypeEmbeddings();
@@ -883,6 +883,26 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     // 4) Print the speed & correctness info
     // total tokens processed: N*L
     size_t total_tokens = data_array.size() * data_array[0].size();
+    size_t total_tokens_encoder2 = encoder_2_input.size() * encoder_2_input[0].size();
+
+    // Calculate total padded tokens for encoder1 and encoder2
+    // From encoder1 count the number of -1s in libcell_type_ids
+    // From encoder2 count the number of -1s in encoder_2_input_libcell_type_ids
+    size_t total_padded_tokens_encoder1 = 0;
+    size_t total_padded_tokens_encoder2 = 0;
+    for (size_t i = 0; i < N; i++) {
+      for (size_t j = 0; j < L/2; j++) {
+        if (libcell_type_ids[i][2*j] == -1) {
+          total_padded_tokens_encoder1++;
+        }
+        if (libcell_type_ids[i][2*j+1] == -1) {
+          total_padded_tokens_encoder1++;
+        }
+        if (encoder_2_input_libcell_type_ids[i][j] == -1) {
+          total_padded_tokens_encoder2++;
+        }
+      }
+    }
 
 
 
@@ -892,7 +912,14 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     std::cout << "Encoder 2 parameters: " << encoder_2_param_num << std::endl;
     std::cout << "Total model parameters: " << model_params << std::endl;
 
-    std::cout << "Total tokens: " << total_tokens << ": " << data_array.size() << "X" << data_array[0].size() << std::endl;
+    std::cout << "Total tokens for Encoder 1: " << total_tokens << ": " << data_array.size() << "X" << data_array[0].size() << std::endl;
+    std::cout << "Total tokens for Encoder 2: " << total_tokens_encoder2 << ": " << encoder_2_input.size() << "X" << encoder_2_input[0].size() << std::endl;
+    std::cout << "Total non-padded tokens for Encoder 1: " << total_tokens - total_padded_tokens_encoder1 << std::endl;
+    std::cout << "Total non-padded tokens for Encoder 2: " << total_tokens_encoder2 - total_padded_tokens_encoder2 << std::endl;
+    std::cout << "Total padded tokens for Encoder 1: " << total_padded_tokens_encoder1 << std::endl;
+    std::cout << "Total padded tokens for Encoder 2: " << total_padded_tokens_encoder2 << std::endl;
+    std::cout << "Average valid length for Encoder 1: " << (total_tokens - total_padded_tokens_encoder1) / N << std::endl;
+    std::cout << "Average valid length for Encoder 2: " << (total_tokens_encoder2 - total_padded_tokens_encoder2) / N << std::endl;
 
     std::cout << "1st Encoder Input shape: (" << data_array.size() << ", " << data_array[0].size() << ", " << data_array[0][0].size() << ")" << std::endl;
     std::cout << "2nd Encoder Input shape: (" << encoder_2_input.size() << ", " << encoder_2_input[0].size() << ", " << encoder_2_input[0][0].size() << ")" << std::endl;
@@ -986,6 +1013,81 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       std::cout << "Loaded Eigen  time: " << loaded_eigen_us << " us   => "
                 << (1e6 * double(total_tokens) / double(loaded_eigen_us))
                 << " tokens/sec\n";
+
+      // Based on loaded_eigen_output, determine gate sizes, calculate accuracy (compared to label), and apply the gate sizes to the design
+      // The loaded_eigen_output is in the shape (N, L/2, D_out) where D_out is the number of classes
+      // The labels is in the shape (N, L/2) where the value is the index of the correct libcell among the same type
+      // The gate sizes are determined by the index of the maximum value in the D_out dimension of the loaded_eigen_output
+      // The accuracy is calculated by comparing the maximum value index to the label value
+      // The gate sizes are applied to the design by updating the libcell name of the cell with the corresponding libcell name from the libcell_id_to_libcell_ mapping
+
+      // Peform argmax on the D_out dimension of the loaded_eigen_output to get the predicted libcell index
+      std::vector<std::vector<int>> predicted_libcell_indices;
+      predicted_libcell_indices = std::vector<std::vector<int>>(N, std::vector<int>(L/2, 0));
+      for (size_t i = 0; i < N; i++) {
+        for (size_t j = 0; j < L/2; j++) {
+          int max_index = 0;
+          float max_value = loaded_eigen_output[i][j][0];
+          for (size_t k = 1; k < D_out; k++) {
+            if (loaded_eigen_output[i][j][k] > max_value) {
+              max_index = k;
+              max_value = loaded_eigen_output[i][j][k];
+            }
+          }
+          predicted_libcell_indices[i][j] = max_index;
+        }
+      }
+
+      // Calculate the accuracy by comparing the predicted libcell index to the label
+      // Ignore the padding tokens by checking for -1 in the encoder_2_input_libcell_type_ids
+      size_t num_correct = 0;
+      size_t total_cells = 0;
+      float accuracy = 0.0;
+      for (size_t i = 0; i < N; i++) {
+        for (size_t j = 0; j < L/2; j++) {
+          if (encoder_2_input_libcell_type_ids[i][j] != -1) {
+            total_cells++;
+            if (predicted_libcell_indices[i][j] == labels[i][j]) {
+              num_correct++;
+            }
+          }
+        }
+      }
+      if (total_cells > 0) {
+        accuracy = (float)num_correct / (float)total_cells;
+      }
+
+      std::cout << "Number of non-padding token cells: " << total_cells << std::endl;
+      std::cout << "Number of correct predictions: " << num_correct << std::endl;
+      std::cout << "Accuracy: " << accuracy << std::endl;
+
+      // Generate a map of cell ID to a vector of libcell IDs that the TransSizer model predicted
+      std::unordered_map<int, std::vector<int>> cell_id_to_predicted_libcell_ids;
+      for (size_t i = 0; i < N; i++) {
+        for (size_t j = 0; j < L/2; j++) {
+          if (encoder_2_input_libcell_type_ids[i][j] != -1) {
+            int cell_id = cell_ids[i][j*2];
+            int predicted_libcell_id = 0;
+            // Check if predicted_libcell_indices[i][j] exceeds the bounds of the libcell_type_id_to_libcell_ids_ vector
+            // This happens as the maximum number of classes is set to 50, but the actual number of classes is less
+            if (predicted_libcell_indices[i][j] >= libcell_type_id_to_libcell_ids_[encoder_2_input_libcell_type_ids[i][j]].size()) {
+              predicted_libcell_indices[i][j] = 0; // Set to 0 if out of bounds to prevent crash
+            }
+            else {
+              predicted_libcell_id = libcell_type_id_to_libcell_ids_[encoder_2_input_libcell_type_ids[i][j]][predicted_libcell_indices[i][j]];
+            }
+            cell_id_to_predicted_libcell_ids[cell_id].push_back(predicted_libcell_id);
+          }
+        }
+      }
+
+      // If there are multiple predicted libcell IDs for a cell, the correct way to break ties is by selecting the libcell with the lower fo4 delay
+      // Generate a map of cell ID to the libcell ID with ties broken by the lower fo4 delay
+      // Need to have a way of looking up the fo4 delay of a libcell ID
+      // Use dynamic programming to store the fo4 delay of each libcell ID and then use the map to lookup the fo4 delay of the predicted libcell IDs
+      std::unordered_map<int, int> cell_id_to_predicted_libcell_id;
+      
+
     }
 
   }
@@ -2655,6 +2757,19 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformer(
 
     // x2 is now [L/2 x D_model]. Project back to [L/2 x D_out]
     auto final_out = matMul(x2, W_out);
+
+    // Apply softmax to each row like a classification head same as runTransformerEigen
+    for (size_t l = 0; l < L2; l++) {
+        float max_val = *std::max_element(final_out[l].begin(), final_out[l].end());
+        float sum = 0.0f;
+        for (auto& v : final_out[l]) {
+            v = std::exp(v - max_val);
+            sum += v;
+        }
+        for (auto& v : final_out[l]) {
+            v /= sum;
+        }
+    }
 
     // Store final_out in output[n]
     output[n] = final_out; // shape [L/2 x D_out]
