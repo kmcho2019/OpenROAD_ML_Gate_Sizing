@@ -782,6 +782,22 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       }
     }
 
+    // encoder_2_output_avail_libcell_num shape: (N, L/2)
+    // The number of available libcell types for each cell when resizing
+    // The number of available libcell types can be found by taking the length libcell_type_id_to_libcell_ids_ vector for given libcell_type_id
+    std::vector<std::vector<int>> encoder_2_output_avail_libcell_num;
+    encoder_2_output_avail_libcell_num = std::vector<std::vector<int>>(N, std::vector<int>(L/2, 0));
+    // Initialize the encoder_2_output_avail_libcell_num with the number of available libcell types for each cell
+    // by searching through encoder_2_input_libcell_type_ids and finding the corresponding libcell type ID in libcell_type_id_to_libcell_ids_
+    for (size_t i = 0; i < N; i++) {
+      for (size_t j = 0; j < L/2; j++) {
+        int libcell_type_id = encoder_2_input_libcell_type_ids[i][j];
+        if (libcell_type_id >= 0 && libcell_type_id < libcell_type_id_to_libcell_ids_.size()) {
+          encoder_2_output_avail_libcell_num[i][j] = libcell_type_id_to_libcell_ids_[libcell_type_id].size();
+        }
+      }
+    }
+
 
     std::vector<std::vector<std::vector<float>>> encoder_2_input;
     encoder_2_input = std::vector<std::vector<std::vector<float>>>(N, std::vector<std::vector<float>>(L/2, std::vector<float>(embedding_size_, 0.0)));
@@ -808,6 +824,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/libcell_ids.bin", libcell_ids);
     writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/libcell_type_ids.bin", libcell_type_ids);
     writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/encoder_2_input_libcell_type_ids.bin", encoder_2_input_libcell_type_ids);
+    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/encoder_2_output_avail_libcell_num.bin", encoder_2_output_avail_libcell_num);
 
     // Generate the labels shape (N, L) for the transformer model integer classification labels corresponding to correct libcell ID for each cell
     // Read .size file to get cell->libcell mapping
@@ -1022,13 +1039,16 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       // The gate sizes are applied to the design by updating the libcell name of the cell with the corresponding libcell name from the libcell_id_to_libcell_ mapping
 
       // Peform argmax on the D_out dimension of the loaded_eigen_output to get the predicted libcell index
+      // Use encoder_2_output_avail_libcell_num to only consider the available libcell types for each cell
+      // For example if encoder_2_output_avail_libcell_num[i][j] is 3, then only consider the first 3 elements of the D_out dimension
       std::vector<std::vector<int>> predicted_libcell_indices;
       predicted_libcell_indices = std::vector<std::vector<int>>(N, std::vector<int>(L/2, 0));
       for (size_t i = 0; i < N; i++) {
         for (size_t j = 0; j < L/2; j++) {
           int max_index = 0;
           float max_value = loaded_eigen_output[i][j][0];
-          for (size_t k = 1; k < D_out; k++) {
+          int num_avail_libcells = encoder_2_output_avail_libcell_num[i][j]; // Number of available libcell types for the cell
+          for (size_t k = 1; k < static_cast<size_t> (num_avail_libcells); k++) {
             if (loaded_eigen_output[i][j][k] > max_value) {
               max_index = k;
               max_value = loaded_eigen_output[i][j][k];
