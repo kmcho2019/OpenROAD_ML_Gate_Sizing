@@ -57,8 +57,25 @@ void MLGateSizer::addToken(const std::vector<float>& pin_data,
 }
 
 
-void MLGateSizer::getEndpointAndCriticalPaths()
+void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_path,
+                                              const std::string& tech_embedding_file_path,
+                                              const std::string& label_size_file_path,
+                                              const std::string& model_weight_file_path)
 {
+  // Output file base directory
+  //const std::string output_base_path = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/NV_NVDLA_partition_m";
+  // Ensure that output directory exists
+  std::filesystem::create_directories(output_base_path);
+
+
+  // Input files
+  // Tech embedding load file path
+  //const std::string tech_embedding_file_path = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/ASAP7_libcell_embeddings.bin";
+  // Label .size file load file path
+  //const std::string label_size_file_path = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/NV_NVDLA_partition_m.size";
+  // Transsizer model weight load file path
+  //const std::string model_weight_file_path = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/transformer_params.bin";
+
   // Print out statement to indicate the function is running
   std::cout << "Retrieving endpoints and critical paths..." << std::endl;
 
@@ -88,7 +105,7 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                               // seems to be setup time slack which is more
                               // relevant for gatesizing min/holdtime slack have
                               // to be fixed with buffer insertion)
-      100, //10 * endpoints->size(), // group_count
+      20,//5 * endpoints->size(),//100, //10 * endpoints->size(), // group_count
       endpoints->size(),      // endpoint_count
       true,                   // unique_pins
       -sta::INF,
@@ -228,19 +245,26 @@ void MLGateSizer::getEndpointAndCriticalPaths()
     // Load the embeddings based on the number of libcells
     // Currently supports ASAP7 and Nangate45 temporary fix needs to be more robust and general
     if (libcell_to_id_.size() == 216) { // ASAP7
-      loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/ASAP7_libcell_embeddings.bin", embedding_size);
+      //loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/ASAP7_libcell_embeddings.bin", embedding_size);
+      loadEmbeddingsBinary(tech_embedding_file_path, embedding_size);
       updateLibcellTypeEmbeddings();
-      const std::string type_embedding_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/ASAP7_libcell_type_embeddings.bin";
-      const std::string weight_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/transformer_params.bin";
-      exportTypeEmbeddings(type_embedding_filename);
-      loadWeights(weight_filename); // Load the transformer weights
+      //const std::string type_embedding_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/ASAP7_libcell_type_embeddings.bin";
+      //const std::string weight_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/transformer_params.bin";
+      std::filesystem::path type_embedding_export_path = std::filesystem::path(output_base_path) / "ASAP7_libcell_type_embeddings.bin";
+      exportTypeEmbeddings(type_embedding_export_path.string());
+      loadWeights(model_weight_file_path); // Load the transformer weights
     }
     else if (libcell_to_id_.size() == 135) {  // Nangate45
-      loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/nangate45_libcell_embeddings.bin", embedding_size);
+      //loadEmbeddingsBinary("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/embedding_generation/nangate45_libcell_embeddings.bin", embedding_size);
+      loadEmbeddingsBinary(tech_embedding_file_path, embedding_size);
       updateLibcellTypeEmbeddings();
-      const std::string type_embedding_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/nangate45_libcell_type_embeddings.bin";
-      exportTypeEmbeddings(type_embedding_filename);
+      //const std::string type_embedding_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/nangate45_libcell_type_embeddings.bin";
+      std::filesystem::path type_embedding_export_path = std::filesystem::path(output_base_path) / "nangate45_libcell_type_embeddings.bin";
+      exportTypeEmbeddings(type_embedding_export_path.string());
       const std::string weight_filename = "";
+      //loadWeights(model_weight_file_path); // Load the transformer weights
+      std::cout << "Unsupported, unable to load model weights." << std::endl;
+      std::cout << "Not implemented for Nangate45 (only ASAP7 so far)" << std::endl;
     }
     else {
       std::cout << "Unsupported, unable to load embeddings" << std::endl;
@@ -664,8 +688,14 @@ void MLGateSizer::getEndpointAndCriticalPaths()
                                       libcell_to_type_id_,
                                       libcell_id_to_embedding_);
 
-    auto [data_array, pin_ids, cell_ids, libcell_ids, libcell_type_ids] = builder.build();
+    auto [data_array_temp, pin_ids_temp, cell_ids_temp, libcell_ids_temp, libcell_type_ids_temp] = builder.build();
 
+    // Take ownership by moving the data (rvalue references) into new variables
+    std::vector<std::vector<std::vector<float>>> data_array = std::move(data_array_temp);
+    std::vector<std::vector<int>> pin_ids = std::move(pin_ids_temp);
+    std::vector<std::vector<int>> cell_ids = std::move(cell_ids_temp);
+    std::vector<std::vector<int>> libcell_ids = std::move(libcell_ids_temp);
+    std::vector<std::vector<int>> libcell_type_ids = std::move(libcell_type_ids_temp);
 
     
     // Debugging print statements to check data_array and libcell_type_ids
@@ -811,24 +841,10 @@ void MLGateSizer::getEndpointAndCriticalPaths()
       }
     }
 
-    // Save the data_array, encoder_2_input, pin_ids, cell_ids, libcell_ids, libcell_type_ids to a binary file
-    // The data_array is saved as a 3D array, pin_ids, cell_ids, libcell_ids, libcell_type_ids are saved as 2D arrays
-    // The data_array is saved as a float32 array, pin_ids, cell_ids, libcell_ids, libcell_type_ids are saved as int32 arrays
-
-    // Save the 3D arrays
-    writeBinaryFile3DFloat("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/data_array.bin", data_array);
-    writeBinaryFile3DFloat("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/encoder_2_input.bin", encoder_2_input);
-    // Save the 2D arrays
-    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/pin_ids.bin", pin_ids);
-    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/cell_ids.bin", cell_ids);
-    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/libcell_ids.bin", libcell_ids);
-    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/libcell_type_ids.bin", libcell_type_ids);
-    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/encoder_2_input_libcell_type_ids.bin", encoder_2_input_libcell_type_ids);
-    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/encoder_2_output_avail_libcell_num.bin", encoder_2_output_avail_libcell_num);
 
     // Generate the labels shape (N, L) for the transformer model integer classification labels corresponding to correct libcell ID for each cell
     // Read .size file to get cell->libcell mapping
-    std::unordered_map<std::string, std::string> cell_name_to_libcell_name = readSizeFile("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/NV_NVDLA_partition_m.size");
+    std::unordered_map<std::string, std::string> cell_name_to_libcell_name = readSizeFile(label_size_file_path);
     std::unordered_map<int, int> cell_id_to_libcell_id;
     for (const auto& [cell_name, libcell_name] : cell_name_to_libcell_name) {
       // Lookup cell ID - skip if not found
@@ -869,8 +885,51 @@ void MLGateSizer::getEndpointAndCriticalPaths()
         }
       }
     }
-    // Save the labels to a binary file
-    writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/labels.bin", labels);
+
+    // Save the data_array, encoder_2_input, pin_ids, cell_ids, libcell_ids, libcell_type_ids to a binary file
+    // The data_array is saved as a 3D array, pin_ids, cell_ids, libcell_ids, libcell_type_ids are saved as 2D arrays
+    // The data_array is saved as a float32 array, pin_ids, cell_ids, libcell_ids, libcell_type_ids are saved as int32 arrays
+    // Also save the labels as a 2D array
+
+
+
+    // Save the 3D arrays
+    // Group files by type using tuples (filename_suffix, data, writer_function)
+    const std::vector<std::tuple<const char*, 
+                                std::vector<std::vector<std::vector<float>>>&, 
+                                void (rsz::MLGateSizer::*)(const std::string&, const std::vector<std::vector<std::vector<float>>>&)>> float3d_files = {
+        {"./data_array.bin", data_array, &rsz::MLGateSizer::writeBinaryFile3DFloat},
+        {"./encoder_2_input.bin", encoder_2_input, &rsz::MLGateSizer::writeBinaryFile3DFloat}
+    };
+
+    //writeBinaryFile3DFloat("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/data_array.bin", data_array);
+    //writeBinaryFile3DFloat("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/encoder_2_input.bin", encoder_2_input);
+    // Save the 2D arrays
+    // Group files by type using tuples (filename_suffix, data, writer_function)
+    const std::vector<std::tuple<const char*, 
+                                std::vector<std::vector<int>>&, 
+                                void (rsz::MLGateSizer::*)(const std::string&, const std::vector<std::vector<int>>&)>> int2d_files = {
+        {"./pin_ids.bin", pin_ids, &rsz::MLGateSizer::writeBinaryFile2DInt},
+        {"./cell_ids.bin", cell_ids, &rsz::MLGateSizer::writeBinaryFile2DInt},
+        {"./libcell_ids.bin", libcell_ids, &rsz::MLGateSizer::writeBinaryFile2DInt},
+        {"./libcell_type_ids.bin", libcell_type_ids, &rsz::MLGateSizer::writeBinaryFile2DInt},
+        {"./encoder_2_input_libcell_type_ids.bin", encoder_2_input_libcell_type_ids, &rsz::MLGateSizer::writeBinaryFile2DInt},
+        {"./encoder_2_output_avail_libcell_num.bin", encoder_2_output_avail_libcell_num, &rsz::MLGateSizer::writeBinaryFile2DInt},
+        {"./labels.bin", labels, &rsz::MLGateSizer::writeBinaryFile2DInt}
+    };
+    
+    //writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/pin_ids.bin", pin_ids);
+    //writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/cell_ids.bin", cell_ids);
+    //writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/libcell_ids.bin", libcell_ids);
+    //writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/libcell_type_ids.bin", libcell_type_ids);
+    //writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/encoder_2_input_libcell_type_ids.bin", encoder_2_input_libcell_type_ids);
+    //writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/encoder_2_output_avail_libcell_num.bin", encoder_2_output_avail_libcell_num);
+    //writeBinaryFile2DInt("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/labels.bin", labels);
+
+    // Process output for all files
+    this->batch_process_files(output_base_path, float3d_files);
+    this->batch_process_files(output_base_path, int2d_files);
+
 
     //auto outputs = runTransformer(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);  // Run the transformer model
     //auto eigen_outputs = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);  // Run the transformer model using Eigen
@@ -1128,7 +1187,7 @@ void MLGateSizer::writeBinaryFile3DFloat(const std::string& filename,
 {
     std::ofstream out(filename, std::ios::binary);
     if (!out) {
-        logger_->error(utl::RSZ, 1001, "Cannot open file {} for writing", filename);
+        logger_->error(utl::RSZ, 1001, "Cannot open file {} for writing (writeBinaryFile3DFloat)", filename);
         return;
     }
 
@@ -1149,7 +1208,7 @@ void MLGateSizer::writeBinaryFile3DFloat(const std::string& filename,
     }
 
     if (!out) {
-        logger_->error(utl::RSZ, 1002, "Error writing to file {}", filename);
+        logger_->error(utl::RSZ, 1002, "Error writing to file {} (writeBinaryFile3DFloat)", filename);
     }
 }
 
@@ -1158,7 +1217,7 @@ void MLGateSizer::writeBinaryFile2DInt(const std::string& filename,
 {
     std::ofstream out(filename, std::ios::binary);
     if (!out) {
-        logger_->error(utl::RSZ, 1001, "Cannot open file {} for writing", filename);
+        logger_->error(utl::RSZ, 1003, "Cannot open file {} for writing (writeBinaryFile2DInt)", filename);
         return;
     }
 
@@ -1175,7 +1234,7 @@ void MLGateSizer::writeBinaryFile2DInt(const std::string& filename,
     }
 
     if (!out) {
-        logger_->error(utl::RSZ, 1002, "Error writing to file {}", filename);
+        logger_->error(utl::RSZ, 1004, "Error writing to file {} (writeBinaryFile2DInt)", filename);
     }
 }
 
@@ -1186,7 +1245,7 @@ std::unordered_map<std::string, std::string> MLGateSizer::readSizeFile(const std
     std::unordered_map<std::string, std::string> libcell_to_type;
     std::ifstream in(filename);
     if (!in) {
-        logger_->error(utl::RSZ, 1003, "Cannot open file {} for reading", filename);
+        logger_->error(utl::RSZ, 1005, "Cannot open file {} for reading (readSizeFile)", filename);
         return libcell_to_type;
     }
 
@@ -1195,7 +1254,7 @@ std::unordered_map<std::string, std::string> MLGateSizer::readSizeFile(const std
         std::istringstream iss(line);
         std::string libcell_name, libcell_type;
         if (!(iss >> libcell_name >> libcell_type)) {
-            logger_->error(utl::RSZ, 1004, "Error reading line from file {}", filename);
+            logger_->error(utl::RSZ, 1006, "Error reading line from file {} (readSizeFile)", filename);
             return libcell_to_type;
         }
         libcell_to_type[libcell_name] = libcell_type;
@@ -1210,7 +1269,7 @@ void MLGateSizer::exportTypeEmbeddings(const std::string& filename)
   const auto& embedding_map = libcell_type_id_to_embedding_;
   
   if (embedding_map.empty()) {
-    logger_->error(utl::RSZ, 1006, "Embedding map is empty");
+    logger_->error(utl::RSZ, 1007, "Embedding map is empty (exportTypeEmbeddings)");
     return;
   }
 
@@ -1225,7 +1284,7 @@ void MLGateSizer::exportTypeEmbeddings(const std::string& filename)
   size_t N = keys.size();
   for (size_t i = 0; i < N; ++i) {
     if (keys[i] != static_cast<int>(i)) {
-      logger_->error(utl::RSZ, 6007, "libcell_type_ids are not contiguous starting from 0");
+      logger_->error(utl::RSZ, 1008, "libcell_type_ids are not contiguous starting from 0 (exportTypeEmbeddings)");
       return;
     }
   }
@@ -1234,7 +1293,7 @@ void MLGateSizer::exportTypeEmbeddings(const std::string& filename)
   size_t D = embedding_map.at(keys[0]).size();
   for (const auto& key : keys) {
   if (embedding_map.at(key).size() != D) {
-    logger_->error(utl::RSZ, 6008, "Inconsistent embedding dimensions");
+    logger_->error(utl::RSZ, 1009, "Inconsistent embedding dimensions (exportTypeEmbeddings)");
     return;
   }
   }
@@ -1242,7 +1301,7 @@ void MLGateSizer::exportTypeEmbeddings(const std::string& filename)
   // Open file
   std::ofstream out(filename, std::ios::binary);
   if (!out) {
-    logger_->error(utl::RSZ, 6001, "Cannot open file {} for writing", filename);
+    logger_->error(utl::RSZ, 1010, "Cannot open file {} for writing (exportTypeEmbeddings)", filename);
     return;
   }
 
@@ -1257,7 +1316,7 @@ void MLGateSizer::exportTypeEmbeddings(const std::string& filename)
   }
 
   if (!out) {
-    logger_->error(utl::RSZ, 6002, "Error writing to file {}", filename);
+    logger_->error(utl::RSZ, 1011, "Error writing to file {} (exportTypeEmbeddings)", filename);
   }
 }
 
@@ -1265,7 +1324,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::readBinaryFile(const s
 {
     std::ifstream in(filename, std::ios::binary);
     if (!in) {
-        logger_->error(utl::RSZ, 1003, "Cannot open file {} for reading", filename);
+        logger_->error(utl::RSZ, 1012, "Cannot open file {} for reading (readBinaryFile)", filename);
         return {};
     }
 
@@ -1276,7 +1335,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::readBinaryFile(const s
     in.read(reinterpret_cast<char*>(&D), sizeof(size_t));
 
     if (!in) {
-        logger_->error(utl::RSZ, 1004, "Error reading dimensions from file {}", filename);
+        logger_->error(utl::RSZ, 1013, "Error reading dimensions from file {} (readBinaryFile)", filename);
         return {};
     }
 
@@ -1289,7 +1348,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::readBinaryFile(const s
         for (auto& token : seq) {
             in.read(reinterpret_cast<char*>(token.data()), D * sizeof(float));
             if (!in) {
-                logger_->error(utl::RSZ, 1005, "Error reading data from file {}", filename);
+                logger_->error(utl::RSZ, 1014, "Error reading data from file {} (readBinaryFile)", filename);
                 return {};
             }
         }
@@ -1335,7 +1394,7 @@ void MLGateSizer::saveEmbeddingsBinary(const std::string& filename)
 {
     std::ofstream out(filename, std::ios::binary);
     if (!out) {
-        logger_->error(utl::RSZ, 3001, "Cannot open embeddings file {}", filename);
+        logger_->error(utl::RSZ, 1015, "Cannot open embeddings file {} (saveEmbeddingsBinary)", filename);
         return;
     }
 
@@ -1355,7 +1414,7 @@ void MLGateSizer::loadEmbeddingsBinary(const std::string& filename, size_t embed
 {
     std::ifstream in(filename, std::ios::binary);
     if (!in) {
-        logger_->error(utl::RSZ, 3002, "Cannot open embeddings file {}", filename);
+        logger_->error(utl::RSZ, 1016, "Cannot open embeddings file {} (loadEmbeddingsBinary)", filename);
         return;
     }
 
@@ -1365,8 +1424,8 @@ void MLGateSizer::loadEmbeddingsBinary(const std::string& filename, size_t embed
     in.read(reinterpret_cast<char*>(&file_embedding_size), sizeof(size_t));
     
     if (num_items != ordered_libcells_.size() || file_embedding_size != embedding_size) {
-        logger_->error(utl::RSZ, 3003, 
-            "Embedding file dimensions mismatch. Expected {} items of size {}, got {} items of size {}",
+        logger_->error(utl::RSZ, 1017, 
+            "Embedding file dimensions mismatch. Expected {} items of size {}, got {} items of size {} (loadEmbeddingsBinary)",
             ordered_libcells_.size(), embedding_size, num_items, file_embedding_size);
         return;
     }
@@ -1379,7 +1438,7 @@ void MLGateSizer::loadEmbeddingsBinary(const std::string& filename, size_t embed
     for (size_t i = 0; i < num_items; ++i) {
         in.read(reinterpret_cast<char*>(embedding.data()), embedding_size * sizeof(float));
         if (!in) {
-            logger_->error(utl::RSZ, 3004, "Error reading embedding {} from file", i);
+            logger_->error(utl::RSZ, 1018, "Error reading embedding {} from file (loadEmbeddingsBinary)", i);
             return;
         }
         libcell_id_to_embedding_[i] = embedding;
@@ -1716,7 +1775,7 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
 
     
     if (!ok) {
-        logger_->error(utl::RSZ, 5001, "Cannot load weights: {}", errMsg);
+        logger_->error(utl::RSZ, 1019, "Cannot load weights: {} (loadWeights)", errMsg);
         return;
     }
     
@@ -1729,7 +1788,7 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
       
       auto it = param_map.find(name);
       if (it == param_map.end()) {
-          logger_->error(utl::RSZ, 5002, "Missing param {}", name);
+          logger_->error(utl::RSZ, 1020, "Missing param {} (loadWeights)", name);
           return;
       }
 
@@ -1747,19 +1806,19 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
       if (name == "proj_in1.weight") {
         transformer_weights_.W_in1.resize(target_rows, target_cols);
         if (!fillEigenMatrix(pd, transformer_weights_.W_in1, transpose, errMsg)) {
-          logger_->error(utl::RSZ, 5007, "Failed to fill {}: {}", name, errMsg);
+          logger_->error(utl::RSZ, 1021, "Failed to fill {}: {} (loadWeights)", name, errMsg);
           return;
         }
       } else if (name == "proj_in2.weight") {
         transformer_weights_.W_in2.resize(target_rows, target_cols);
         if (!fillEigenMatrix(pd, transformer_weights_.W_in2, transpose, errMsg)) {
-          logger_->error(utl::RSZ, 5007, "Failed to fill {}: {}", name, errMsg);
+          logger_->error(utl::RSZ, 1022, "Failed to fill {}: {} (loadWeights)", name, errMsg);
           return;
         }
       } else if (name == "proj_out.weight") {
         transformer_weights_.W_out.resize(target_rows, target_cols);
         if (!fillEigenMatrix(pd, transformer_weights_.W_out, transpose, errMsg)) {
-          logger_->error(utl::RSZ, 5007, "Failed to fill {}: {}", name, errMsg);
+          logger_->error(utl::RSZ, 1023, "Failed to fill {}: {} (loadWeights)", name, errMsg);
           return;
         }          
       }
@@ -1834,7 +1893,7 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
         
           auto it = param_map.find(base + w);
           if (it == param_map.end()) {
-              logger_->error(utl::RSZ, 5003, "Missing encoder1 attention weight {}", base + w);
+              logger_->error(utl::RSZ, 1024, "Missing encoder1 attention weight {} (loadWeights)", base + w);
               return;
           }
           
@@ -1851,25 +1910,25 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
           if (w.find("Wq") != std::string::npos) {
             transformer_weights_.encoder1_0_Wq_1[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_Wq_1[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d Wq: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1025, "Failed to fill encoder1 layer %d Wq: %s (loadWeights)", layer, errMsg);
               return;
             }
           } else if (w.find("Wk") != std::string::npos) {
             transformer_weights_.encoder1_0_Wk_1[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_Wk_1[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d Wk: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1026, "Failed to fill encoder1 layer %d Wk: %s (loadWeights)", layer, errMsg);
               return;
             }
           } else if (w.find("Wv") != std::string::npos) {
             transformer_weights_.encoder1_0_Wv_1[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_Wv_1[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d Wv: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1027, "Failed to fill encoder1 layer %d Wv: %s (loadWeights)", layer, errMsg);
               return;
             }
           } else if (w.find("Wo") != std::string::npos) {
             transformer_weights_.encoder1_0_Wo_1[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_Wo_1[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d Wo: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1028, "Failed to fill encoder1 layer %d Wo: %s (loadWeights)", layer, errMsg);
               return;
             }              
           }
@@ -1883,7 +1942,7 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
           
           auto it = param_map.find(base + w);
           if (it == param_map.end()) {
-            logger_->error(utl::RSZ, 5004, "Missing encoder1 FF weight {}", base + w);
+            logger_->error(utl::RSZ, 1029, "Missing encoder1 FF weight {} (loadWeights)", base + w);
             return;
           }
 
@@ -1899,13 +1958,13 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
             int target_cols = transpose ? pd.shape[0] : pd.shape[1];
             transformer_weights_.encoder1_0_FF_W1_1[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_FF_W1_1[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d FF_W1: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1030, "Failed to fill encoder1 layer %d FF_W1: %s (loadWeights)", layer, errMsg);
               return;
             }
           } else if (w.find("net.0.bias") != std::string::npos) {
             transformer_weights_.encoder1_0_FF_b1_1[layer].resize(pd.shape[0]);
             if (!fillEigenVector(pd, transformer_weights_.encoder1_0_FF_b1_1[layer], errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d FF_b1: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1031, "Failed to fill encoder1 layer %d FF_b1: %s (loadWeights)", layer, errMsg);
               return;
             }
           } else if (w.find("net.2.weight") != std::string::npos) {
@@ -1914,13 +1973,13 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
             int target_cols = transpose ? pd.shape[0] : pd.shape[1];
             transformer_weights_.encoder1_0_FF_W2_1[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder1_0_FF_W2_1[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d FF_W2: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1032, "Failed to fill encoder1 layer %d FF_W2: %s (loadWeights)", layer, errMsg);
               return;
             }
           } else if (w.find("net.2.bias") != std::string::npos) {
             transformer_weights_.encoder1_0_FF_b2_1[layer].resize(pd.shape[0]);
             if (!fillEigenVector(pd, transformer_weights_.encoder1_0_FF_b2_1[layer], errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder1 layer %d FF_b2: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1033, "Failed to fill encoder1 layer %d FF_b2: %s (loadWeights)", layer, errMsg);
               return;
             }
           }
@@ -1939,7 +1998,7 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
       for (const auto& w : attn_weights) {
           auto it = param_map.find(base + w);
           if (it == param_map.end()) {
-            logger_->error(utl::RSZ, 5005, "Missing encoder2 attention weight {}", base + w);
+            logger_->error(utl::RSZ, 1034, "Missing encoder2 attention weight {} (loadWeights)", base + w);
             return;
           }
 
@@ -1955,28 +2014,28 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
           if (w.find("Wq") != std::string::npos) {
             transformer_weights_.encoder2_0_Wq_2[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_Wq_2[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d Wq: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1035, "Failed to fill encoder2 layer %d Wq: %s (loadWeights)", layer, errMsg);
               return;
             }
           } 
           else if (w.find("Wk") != std::string::npos) {
             transformer_weights_.encoder2_0_Wk_2[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_Wk_2[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d Wk: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1036, "Failed to fill encoder2 layer %d Wk: %s (loadWeights)", layer, errMsg);
               return;
             }
           } 
           else if (w.find("Wv") != std::string::npos) {
             transformer_weights_.encoder2_0_Wv_2[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_Wv_2[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d Wv: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1037, "Failed to fill encoder2 layer %d Wv: %s (loadWeights)", layer, errMsg);
               return;
             }
           } 
           else if (w.find("Wo") != std::string::npos) {
             transformer_weights_.encoder2_0_Wo_2[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_Wo_2[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d Wo: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1038, "Failed to fill encoder2 layer %d Wo: %s (loadWeights)", layer, errMsg);
               return;
             }
           }
@@ -1989,7 +2048,7 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
         for (const auto& w : ff_weights) {
           auto it = param_map.find(base + w);
           if (it == param_map.end()) {
-              logger_->error(utl::RSZ, 5006, "Missing encoder2 FF weight {}", base + w);
+              logger_->error(utl::RSZ, 1039, "Missing encoder2 FF weight {} (loadWeights)", base + w);
               return;
           }
 
@@ -2005,14 +2064,14 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
             int target_cols = transpose ? pd.shape[0] : pd.shape[1];
             transformer_weights_.encoder2_0_FF_W1_2[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_FF_W1_2[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d FF_W1: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1040, "Failed to fill encoder2 layer %d FF_W1: %s (loadWeights)", layer, errMsg);
               return;
             }
           } 
           else if (w.find("net.0.bias") != std::string::npos) {
             transformer_weights_.encoder2_0_FF_b1_2[layer].resize(pd.shape[0]);
             if (!fillEigenVector(pd, transformer_weights_.encoder2_0_FF_b1_2[layer], errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d FF_b1: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1041, "Failed to fill encoder2 layer %d FF_b1: %s (loadWeights)", layer, errMsg);
               return;
             }
           } 
@@ -2022,14 +2081,14 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
             int target_cols = transpose ? pd.shape[0] : pd.shape[1];
             transformer_weights_.encoder2_0_FF_W2_2[layer].resize(target_rows, target_cols);
             if (!fillEigenMatrix(pd, transformer_weights_.encoder2_0_FF_W2_2[layer], transpose, errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d FF_W2: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1042, "Failed to fill encoder2 layer %d FF_W2: %s (loadWeights)", layer, errMsg);
               return;
             }
           } 
           else if (w.find("net.2.bias") != std::string::npos) {
             transformer_weights_.encoder2_0_FF_b2_2[layer].resize(pd.shape[0]);
             if (!fillEigenVector(pd, transformer_weights_.encoder2_0_FF_b2_2[layer], errMsg)) {
-              logger_->error(utl::RSZ, 5007, "Failed to fill encoder2 layer %d FF_b2: %s", layer, errMsg);
+              logger_->error(utl::RSZ, 1043, "Failed to fill encoder2 layer %d FF_b2: %s (loadWeights)", layer, errMsg);
               return;
             }
           }

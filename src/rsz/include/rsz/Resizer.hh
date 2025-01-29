@@ -412,7 +412,10 @@ class Resizer : public dbStaState
   ////////////////////////////////////////////////////////////////
   // MLGateSizer API
   void loadWeights(const std::string& weight_file_path);
-  void getEndpointAndCriticalPaths();
+  void getEndpointAndCriticalPaths(const std::string& output_base_path,
+                                              const std::string& tech_embedding_file_path,
+                                              const std::string& label_size_file_path,
+                                              const std::string& model_weight_file_path);
   void resizewithML();
 
   ////////////////////////////////////////////////////////////////

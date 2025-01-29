@@ -15,6 +15,7 @@
 #include <iostream>
 #include <chrono>
 #include <Eigen/Dense>
+#include <filesystem> // Include for filesystem operations
 
 namespace sta {
 class PathExpanded;
@@ -429,7 +430,10 @@ class MLGateSizer : public sta::dbStaState
   // void classifyAndResize();
 
   // Function to retrieve endpoints and critical paths (also used for debugging)
-  void getEndpointAndCriticalPaths();
+  void getEndpointAndCriticalPaths(const std::string& output_base_path,
+      const std::string& tech_embedding_file_path,
+      const std::string& label_size_file_path,
+      const std::string& model_weight_file_path);
   // void resizewithML();
 
   // Binary file handling
@@ -502,6 +506,17 @@ class MLGateSizer : public sta::dbStaState
 			return a < b; // Simple lexicographical comparison
 		}
 	};
+
+  // Helper to write binary files
+  template <typename T>
+  void batch_process_files(const std::filesystem::path& base_dir, const std::vector<T>& files) {
+      for (const auto& [filename_suffix, data, writer] : files) {
+          const std::filesystem::path full_path = base_dir / filename_suffix;
+          //writer(full_path.string(), data);
+          // Call member function using this pointer
+          (this->*writer)(full_path.string(), data);
+      }
+  }
   // Eigen::MatrixXf transformer_weights_;
 
   // The final data structure that holds all the transformer's weight matrices

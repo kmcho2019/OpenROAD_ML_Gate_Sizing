@@ -807,11 +807,30 @@ set_worst_slack_nets_percent(float percent)
 }
 
 void
-get_endpoints_and_critical_paths_cmd()
+get_endpoints_and_critical_paths_cmd(const char* output_base_path,
+                                     const char* tech_embedding_file_path,
+                                     const char* label_size_file_path,
+                                     const char* model_weight_file_path)
 {
   ensureLinked();
   Resizer *resizer = getResizer();
-  resizer->getEndpointAndCriticalPaths();
+  if (output_base_path != nullptr && std::strlen(output_base_path) > 0 && 
+      tech_embedding_file_path != nullptr && std::strlen(tech_embedding_file_path) > 0 &&
+      label_size_file_path != nullptr && std::strlen(label_size_file_path) > 0 &&
+      model_weight_file_path != nullptr && std::strlen(model_weight_file_path) > 0) {
+    std::string output_base_path_str(output_base_path);
+    std::string tech_embedding_str(tech_embedding_file_path);
+    std::string label_size_str(label_size_file_path);
+    std::string model_weight_str(model_weight_file_path);
+
+    resizer->getEndpointAndCriticalPaths(
+        output_base_path_str,
+        tech_embedding_str,
+        label_size_str,
+        model_weight_str
+    );
+  }
+
 }
 
 
