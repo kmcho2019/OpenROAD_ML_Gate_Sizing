@@ -682,11 +682,41 @@ sta::proc_redirect report_long_wires {
   rsz::report_long_wires_cmd $count $digits
 }
 
-sta::define_cmd_args "get_endpoints_and_critical_paths" {}
+#sta::define_cmd_args "get_endpoints_and_critical_paths" {}
+sta::define_cmd_args "get_endpoints_and_critical_paths" {
+    -output_base_path output_base_path
+    -tech_embedding_file_path tech_embedding_file_path
+    -label_size_file_path label_size_file_path
+    -model_weight_file_path model_weight_file_path
+}
 
-proc get_endpoints_and_critical_paths {args} {
+#proc get_endpoints_and_critical_paths {args} {
+#
+#  rsz::get_endpoints_and_critical_paths_cmd
+#}
+# Error code 7777 is a placeholder
+proc get_endpoints_and_critical_paths { args } {
+    sta::parse_key_args "get_endpoints_and_critical_paths" args \
+        keys {-output_base_path -tech_embedding_file_path -label_size_file_path -model_weight_file_path} \
+        flags {}
 
-  rsz::get_endpoints_and_critical_paths_cmd
+    # Check for required arguments
+    foreach required_key {
+        -output_base_path
+        -tech_embedding_file_path
+        -label_size_file_path
+        -model_weight_file_path
+    } {
+        if { ![info exists keys($required_key)] } {
+            utl::error RSZ 7777 "Missing required argument $required_key." 
+        }
+    }
+
+    rsz::get_endpoints_and_critical_paths_cmd \
+        $keys(-output_base_path) \
+        $keys(-tech_embedding_file_path) \
+        $keys(-label_size_file_path) \
+        $keys(-model_weight_file_path)
 }
 
 namespace eval rsz {
