@@ -1700,6 +1700,7 @@ bool MLGateSizer::loadModelWeightsRobust(const std::string& filename,
                             std::unordered_map<std::string, ParamData>& out_map,
                             std::string& errMsg)
 {
+    bool compile_prefix_found = false;  // Flag to check if the "_orig_mod." prefix is found
     std::ifstream in(filename, std::ios::binary);
     if (!in.is_open()) {
         errMsg = "Could not open file: " + filename;
@@ -1725,6 +1726,15 @@ bool MLGateSizer::loadModelWeightsRobust(const std::string& filename,
         name.resize(name_len);
         in.read(reinterpret_cast<char*>(&name[0]), name_len);
         if (!in) { errMsg = "Error reading param name"; return false; }
+
+        // Check for the "_orig_mod." prefix and strip it if present.
+        // This indicates that torch.compile was used with the model.
+        // Workaround to also support these compiled models.
+        static const std::string orig_mod_prefix = "_orig_mod.";
+        if (name.rfind(orig_mod_prefix, 0) == 0) {
+            compile_prefix_found = true;
+            name = name.substr(orig_mod_prefix.size());
+        }
 
         // c) ndims
         size_t ndims = 0;
@@ -1756,6 +1766,11 @@ bool MLGateSizer::loadModelWeightsRobust(const std::string& filename,
         pd.shape = dims;
         pd.values = std::move(values);
         out_map[name] = std::move(pd);
+    }
+
+    // Print a message if the compile prefix was found
+    if (compile_prefix_found) {
+        std::cout << "Pytorch compile prefix(_orig_mod.) found in model weights. Stripping it." << std::endl;
     }
 
     return true;
@@ -1837,6 +1852,7 @@ void MLGateSizer::loadWeights(const std::string& weight_file) {
 
     for (const auto& kv : param_map) {
       const std::string& key = kv.first;
+
       
       // Check if the key starts with "encoders1."
       static const std::string enc1_prefix = "encoders1.";
