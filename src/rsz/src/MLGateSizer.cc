@@ -105,7 +105,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
                               // seems to be setup time slack which is more
                               // relevant for gatesizing min/holdtime slack have
                               // to be fixed with buffer insertion)
-      10,//5 * endpoints->size(),//100, //10 * endpoints->size(), // group_count
+      5 * endpoints->size(),//10,//5 * endpoints->size(),//100, //10 * endpoints->size(), // group_count
       endpoints->size(),      // endpoint_count
       true,                   // unique_pins
       -sta::INF,
@@ -150,6 +150,9 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
     std::unordered_map<std::string, int> pin_name_to_id; // Initialize them as empty and build them up during pin retrieval process
     std::unordered_map<std::string, int> cell_name_to_id; // Initialize them as empty and build them up during pin retrieval process
+
+    std::unordered_map<int, std::string> pin_id_to_name; // Initialize them as empty and build them up during pin retrieval process
+    std::unordered_map<int, std::string> cell_id_to_name; // Initialize them as empty and build them up during pin retrieval process
 
     int libcell_id = 0;
     int libcell_type_id = 0;
@@ -573,11 +576,13 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
           if (pin_name_to_id.find(pin_name) == pin_name_to_id.end()) {
             // Pin name doesn't exist, add it to the map with the current pin_id
             pin_name_to_id[pin_name] = pin_id;
+            pin_id_to_name[pin_id] = pin_name;
             pin_id++;
           }
           if (cell_name_to_id.find(cell_name) == cell_name_to_id.end()) {
             // Pin name doesn't exist, add it to the map with the current pin_id
             cell_name_to_id[cell_name] = cell_id;
+            cell_id_to_name[cell_id] = cell_name;
             cell_id++;
           }
 
@@ -1103,7 +1108,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       // The labels is in the shape (N, L/2) where the value is the index of the correct libcell among the same type
       // The gate sizes are determined by the index of the maximum value in the D_out dimension of the loaded_eigen_output
       // The accuracy is calculated by comparing the maximum value index to the label value
-      // The gate sizes are applied to the design by updating the libcell name of the cell with the corresponding libcell name from the libcell_id_to_libcell_ mapping
+      // The gate sizes are applied to the design by updating the libcell name of the cell with the corresponding libcell name from the libcell_id to libcell string mapping
 
       // Peform argmax on the D_out dimension of the loaded_eigen_output to get the predicted libcell index
       // Use encoder_2_output_avail_libcell_num to only consider the available libcell types for each cell
@@ -1150,6 +1155,8 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
       // Generate a map of cell ID to a vector of libcell IDs that the TransSizer model predicted
       std::unordered_map<int, std::vector<int>> cell_id_to_predicted_libcell_ids;
+      std::unordered_map<int, std::unordered_set<int>> cell_id_to_predicted_libcell_id_set; // Use a set to prevent duplicates
+
       for (size_t i = 0; i < N; i++) {
         for (size_t j = 0; j < L/2; j++) {
           if (encoder_2_input_libcell_type_ids[i][j] != -1) {
@@ -1164,6 +1171,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
               predicted_libcell_id = libcell_type_id_to_libcell_ids_[encoder_2_input_libcell_type_ids[i][j]][predicted_libcell_indices[i][j]];
             }
             cell_id_to_predicted_libcell_ids[cell_id].push_back(predicted_libcell_id);
+            cell_id_to_predicted_libcell_id_set[cell_id].insert(predicted_libcell_id);
           }
         }
       }
@@ -1173,7 +1181,129 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       // Need to have a way of looking up the fo4 delay of a libcell ID
       // Use dynamic programming to store the fo4 delay of each libcell ID and then use the map to lookup the fo4 delay of the predicted libcell IDs
       std::unordered_map<int, int> cell_id_to_predicted_libcell_id;
-      
+      std::unordered_map<int, float> libcell_id_to_fo4_delay; // Used to store the fo4 delay of a libcell ID used for breaking ties
+      // Iterate through cells of cell_id_to_predicted_libcell_id_set and find the libcell ID with the lowest fo4 delay to store in cell_id_to_predicted_libcell_id
+      /*
+      for (const auto& [cell_id, libcell_id_set] : cell_id_to_predicted_libcell_id_set) {
+        float min_fo4_delay = std::numeric_limits<float>::max();
+        int min_fo4_delay_libcell_id = 0;
+        for (const auto& libcell_id : libcell_id_set) {
+          // Not sure how to get the fo4 delay of a libcell ID
+          // Not implemented yet
+        }
+        cell_id_to_predicted_libcell_id[cell_id] = min_fo4_delay_libcell_id;
+      }
+      */
+      // As a placeholder, just use the first libcell ID in the vector
+      for (const auto& [cell_id, libcell_id_vector] : cell_id_to_predicted_libcell_ids) {
+        cell_id_to_predicted_libcell_id[cell_id] = libcell_id_vector[0];  
+      }
+
+      // Apply the predicted libcell IDs to the design using resizer_->replaceCell()
+      // Reference RepairSetup.cc/upsizeDrvr()
+      // For now use the first libcell ID in the cell_id_to_predicted_libcell_ids vector
+      // Steps:
+      // 1. Get Instance* drvr from cell_id
+      // 2. Get the LibertyCell* corresponding to the predicted libcell ID
+      // 3. Check if resizer_->dontTouch(drvr) is true, if so, skip the cell
+      // 4. Resize the cell using resizer_->replaceCell(drvr, libcell, true)
+      std::map<int, std::string> updated_cells;
+      std::map<int, std::string> skipped_cells;
+      size_t num_resized_cells = 0;
+      size_t failed_resizing = 0;
+
+      for (const auto& [cell_id, predicted_libcell_id] : cell_id_to_predicted_libcell_id) {
+        // Get cell name from cell_id
+        const std::string& cell_name = cell_id_to_name[cell_id];
+        if (cell_name.empty()) {
+          logger_->error(utl::RSZ, 1044, "Cannot find cell name for cell_id {} (applyPredictions)", 
+                        cell_id);
+          failed_resizing++;
+          continue;
+        }
+
+        // Get Instance* drvr from cell_id
+        sta::Instance* drvr = network_->findInstance(cell_name.c_str());
+        if (!drvr) {
+          logger_->error(utl::RSZ, 1045, "Cannot find instance {} (applyPredictions)", 
+                        cell_name);
+          failed_resizing++;
+          continue;
+        }
+
+        // Get libcell name from predicted_libcell_id
+        // Check if the predicted_libcell_id is valid, if invalid empty string is returned
+        const std::string& libcell_name = predicted_libcell_id < ordered_libcells_.size() ?
+                                          ordered_libcells_[predicted_libcell_id] : "";
+        if (libcell_name.empty()) {
+          logger_->error(utl::RSZ, 1046, "Cannot find libcell name for libcell_id {} (applyPredictions)", 
+                        predicted_libcell_id);
+          failed_resizing++;
+          continue;
+        }
+
+        // Get LibertyCell* from libcell name
+        sta::LibertyCell* predicted_libcell = network_->findLibertyCell(libcell_name.c_str());
+        if (!predicted_libcell) {
+          logger_->error(utl::RSZ, 1047, "Cannot find LibertyCell {} (applyPredictions)", 
+                        libcell_name);
+          failed_resizing++;
+          continue;
+        }
+
+        // Check if resizer_->dontTouch(drvr) is true, if so, skip the cell
+        if (resizer_->dontTouch(drvr)) {
+          skipped_cells[cell_id] = cell_name;
+          continue;
+        }
+
+        // Try to resize the cell
+        bool resize_success = resizer_->replaceCell(drvr, predicted_libcell, true);
+        if (resize_success) {
+          updated_cells[cell_id] = cell_name;
+          num_resized_cells++;
+        } else {
+          logger_->error(utl::RSZ, 1048, "Failed to resize cell {} to libcell {} (applyPredictions)", 
+                        cell_name, libcell_name);
+          failed_resizing++;
+        }
+      }
+
+      // Print summary statistics
+      std::cout << "\nCell Resizing Summary:\n";
+      std::cout << "====================\n";
+      std::cout << "Total cells in design: " << network_->instanceCount() << "\n";
+      std::cout << "Total cells processed: " << cell_id_to_predicted_libcell_id.size() << "\n";
+      std::cout << "Successfully resized:  " << updated_cells.size() << "\n";
+      std::cout << "Skipped (don't touch): " << skipped_cells.size() << "\n";
+      std::cout << "Failed to resize:      " << failed_resizing << "\n";
+
+      // Print first few updated and skipped cells for verification
+      const size_t max_print = 5;
+      std::cout << "\nFirst " << max_print << " Updated Cells:\n";
+      std::cout << "Cell Name -> New Liberty Cell\n";
+      size_t print_count = 0;
+      for (const auto& [id, libcell] : updated_cells) {
+        if (print_count++ >= max_print) break;
+        std::cout << cell_id_to_name[id] << " -> " << libcell << "\n";
+      }
+
+      std::cout << "\nFirst " << max_print << " Skipped Cells (don't touch):\n";
+      std::cout << "Cell Name -> Predicted Liberty Cell\n";
+      print_count = 0;
+      for (const auto& [id, libcell] : skipped_cells) {
+        if (print_count++ >= max_print) break;
+        std::cout << cell_id_to_name[id] << " -> " << libcell << "\n";
+      }
+
+      // Print .size file in standard output
+      // Format: cell_name, libcell_name
+      // For all cells in the design
+      //std::cout << "\nPredicted .size File:\n";
+      //std::cout << "====================\n";
+
+
+
 
     }
 
