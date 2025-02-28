@@ -1194,82 +1194,187 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
         cell_id_to_predicted_libcell_id[cell_id] = min_fo4_delay_libcell_id;
       }
       */
-      // As a placeholder, just use the first libcell ID in the vector
+      // Instead of using fo4 delay, try using area as a tie breaker (larger area is preferred)
+      std::unordered_map<int, float> libcell_id_to_area; // Used to store the area of a libcell ID used for breaking ties
+      // Iterate through cells of cell_id_to_predicted_libcell_id_set and find the libcell ID with the largest area to store in cell_id_to_predicted_libcell_id
+      // Using dynamic programming to add new entries for libcell_id_to_area and then use the map to lookup the area of the predicted libcell IDs
+      // Steps:
+      // 1. Iterate through the cell_id_to_predicted_libcell_ids
+      // 2. For each new libcell ID in libcell_id_vector, get the area from the libcell ID by using string from ordered_libcells_
+      // 3. If the libcell ID is not found in libcell_id_to_area, then add the libcell ID and area to the map
+      // 4. Within the libcell_id_vector, find the libcell ID with the largest area
+      // 5. Store the libcell ID with the largest area in cell_id_to_predicted_libcell_id
       for (const auto& [cell_id, libcell_id_vector] : cell_id_to_predicted_libcell_ids) {
-        cell_id_to_predicted_libcell_id[cell_id] = libcell_id_vector[0];  
+        for (const auto& libcell_id : libcell_id_vector) {
+          if (libcell_id >= ordered_libcells_.size()) continue;
+          const std::string& libcell_name = ordered_libcells_[libcell_id];
+          if (libcell_name.empty()) continue;
+          sta::LibertyCell* libcell = network_->findLibertyCell(libcell_name.c_str());
+          if (!libcell) continue;
+          if (libcell_id_to_area.find(libcell_id) == libcell_id_to_area.end()) {
+            libcell_id_to_area[libcell_id] = libcell->area();
+          }
+        }
+        //cell_id_to_predicted_libcell_id[cell_id] = libcell_id_vector[0];
+        float max_area = 0.0;
+        int max_area_libcell_id = 0;
+        for (const auto& libcell_id : libcell_id_vector) {
+          if (libcell_id_to_area.find(libcell_id) != libcell_id_to_area.end()) {
+            if (libcell_id_to_area[libcell_id] > max_area) {
+              max_area = libcell_id_to_area[libcell_id];
+              max_area_libcell_id = libcell_id;
+            }
+          }
+        }
+        cell_id_to_predicted_libcell_id[cell_id] = max_area_libcell_id;  
       }
 
-      // Apply the predicted libcell IDs to the design using resizer_->replaceCell()
-      // Reference RepairSetup.cc/upsizeDrvr()
-      // For now use the first libcell ID in the cell_id_to_predicted_libcell_ids vector
-      // Steps:
-      // 1. Get Instance* drvr from cell_id
-      // 2. Get the LibertyCell* corresponding to the predicted libcell ID
-      // 3. Check if resizer_->dontTouch(drvr) is true, if so, skip the cell
-      // 4. Resize the cell using resizer_->replaceCell(drvr, libcell, true)
-      std::map<int, std::string> updated_cells;
+      // Debugging flag, use label .size file to resize the cells in the design
+      bool use_label_to_resize = false;
+      std::map<int, std::string> updated_cells; 
       std::map<int, std::string> skipped_cells;
       size_t num_resized_cells = 0;
       size_t failed_resizing = 0;
+      
+      if (!use_label_to_resize) {
+        std::cout << "Use loaded model to resize the cells in the design" << std::endl;
+        // Apply the predicted libcell IDs to the design using resizer_->replaceCell()
+        // Reference RepairSetup.cc/upsizeDrvr()
+        // For now use the first libcell ID in the cell_id_to_predicted_libcell_ids vector
+        // Steps:
+        // 1. Get Instance* drvr from cell_id
+        // 2. Get the LibertyCell* corresponding to the predicted libcell ID
+        // 3. Check if resizer_->dontTouch(drvr) is true, if so, skip the cell
+        // 4. Resize the cell using resizer_->replaceCell(drvr, libcell, true)
 
-      for (const auto& [cell_id, predicted_libcell_id] : cell_id_to_predicted_libcell_id) {
-        // Get cell name from cell_id
-        const std::string& cell_name = cell_id_to_name[cell_id];
-        if (cell_name.empty()) {
-          logger_->error(utl::RSZ, 1044, "Cannot find cell name for cell_id {} (applyPredictions)", 
-                        cell_id);
-          failed_resizing++;
-          continue;
+
+        for (const auto& [cell_id, predicted_libcell_id] : cell_id_to_predicted_libcell_id) {
+          // Get cell name from cell_id
+          const std::string& cell_name = cell_id_to_name[cell_id];
+          if (cell_name.empty()) {
+            logger_->error(utl::RSZ, 1044, "Cannot find cell name for cell_id {} (applyPredictions)", 
+                          cell_id);
+            failed_resizing++;
+            continue;
+          }
+
+          // Get Instance* drvr from cell_id
+          sta::Instance* drvr = network_->findInstance(cell_name.c_str());
+          if (!drvr) {
+            logger_->error(utl::RSZ, 1045, "Cannot find instance {} (applyPredictions)", 
+                          cell_name);
+            failed_resizing++;
+            continue;
+          }
+
+          // Get libcell name from predicted_libcell_id
+          // Check if the predicted_libcell_id is valid, if invalid empty string is returned
+          const std::string& libcell_name = predicted_libcell_id < ordered_libcells_.size() ?
+                                            ordered_libcells_[predicted_libcell_id] : "";
+          if (libcell_name.empty()) {
+            logger_->error(utl::RSZ, 1046, "Cannot find libcell name for libcell_id {} (applyPredictions)", 
+                          predicted_libcell_id);
+            failed_resizing++;
+            continue;
+          }
+
+          // Get LibertyCell* from libcell name
+          sta::LibertyCell* predicted_libcell = network_->findLibertyCell(libcell_name.c_str());
+          if (!predicted_libcell) {
+            logger_->error(utl::RSZ, 1047, "Cannot find LibertyCell {} (applyPredictions)", 
+                          libcell_name);
+            failed_resizing++;
+            continue;
+          }
+
+          // Check if resizer_->dontTouch(drvr) is true, if so, skip the cell
+          if (resizer_->dontTouch(drvr)) {
+            skipped_cells[cell_id] = libcell_name;//cell_name;
+            continue;
+          }
+
+          // Try to resize the cell
+          bool resize_success = resizer_->replaceCell(drvr, predicted_libcell, true);
+          if (resize_success) {
+            updated_cells[cell_id] = libcell_name;//cell_name;
+            num_resized_cells++;
+          } else {
+            logger_->error(utl::RSZ, 1048, "Failed to resize cell {} to libcell {} (applyPredictions)", 
+                          cell_name, libcell_name);
+            failed_resizing++;
+          }
         }
 
-        // Get Instance* drvr from cell_id
-        sta::Instance* drvr = network_->findInstance(cell_name.c_str());
-        if (!drvr) {
-          logger_->error(utl::RSZ, 1045, "Cannot find instance {} (applyPredictions)", 
-                        cell_name);
-          failed_resizing++;
-          continue;
+
+
+      }
+      else {
+        std::cout << "Use label .size file to resize the cells in the design" << std::endl;
+        // Add debugging functionality where the resizing is done using the label .size file
+        // This situation assumes a perfect model
+        // Attempt to find bugs or problems in the path extraction and cell id logging process
+        // cell_id_to_libcell_id: stores the ideal label libcell id for each cell id 
+        for (const auto& [cell_id, label_libcell_id] : cell_id_to_libcell_id) {
+          // Get cell name from cell_id
+          const std::string& cell_name = cell_id_to_name[cell_id];
+          if (cell_name.empty()) {
+            logger_->error(utl::RSZ, 1049, "Cannot find cell name for cell_id {} (applyPredictions)", 
+                          cell_id);
+            failed_resizing++;
+            continue;
+          }
+
+          // Get Instance* drvr from cell_id
+          sta::Instance* drvr = network_->findInstance(cell_name.c_str());
+          if (!drvr) {
+            logger_->error(utl::RSZ, 1050, "Cannot find instance {} (applyPredictions)", 
+                          cell_name);
+            failed_resizing++;
+            continue;
+          }
+
+          // Get libcell name from label_libcell_id
+          // Check if the label_libcell_id is valid, if invalid empty string is returned
+          const std::string& libcell_name = label_libcell_id < ordered_libcells_.size() ?
+                                            ordered_libcells_[label_libcell_id] : "";
+          if (libcell_name.empty()) {
+            logger_->error(utl::RSZ, 1051, "Cannot find libcell name for libcell_id {} (applyPredictions)", 
+                          label_libcell_id);
+            failed_resizing++;
+            continue;
+          }
+
+          // Get LibertyCell* from libcell name
+          sta::LibertyCell* predicted_libcell = network_->findLibertyCell(libcell_name.c_str());
+          if (!predicted_libcell) {
+            logger_->error(utl::RSZ, 1052, "Cannot find LibertyCell {} (applyPredictions)", 
+                          libcell_name);
+            failed_resizing++;
+            continue;
+          }
+
+          // Check if resizer_->dontTouch(drvr) is true, if so, skip the cell
+          if (resizer_->dontTouch(drvr)) {
+            skipped_cells[cell_id] = libcell_name;
+            continue;
+          }
+
+          // Try to resize the cell
+          bool resize_success = resizer_->replaceCell(drvr, predicted_libcell, true);
+          if (resize_success) {
+            updated_cells[cell_id] = libcell_name;
+            num_resized_cells++;
+          } else {
+            logger_->error(utl::RSZ, 1053, "Failed to resize cell {} to libcell {} (applyPredictions)", 
+                          cell_name, libcell_name);
+            failed_resizing++;
+          }
         }
 
-        // Get libcell name from predicted_libcell_id
-        // Check if the predicted_libcell_id is valid, if invalid empty string is returned
-        const std::string& libcell_name = predicted_libcell_id < ordered_libcells_.size() ?
-                                          ordered_libcells_[predicted_libcell_id] : "";
-        if (libcell_name.empty()) {
-          logger_->error(utl::RSZ, 1046, "Cannot find libcell name for libcell_id {} (applyPredictions)", 
-                        predicted_libcell_id);
-          failed_resizing++;
-          continue;
-        }
-
-        // Get LibertyCell* from libcell name
-        sta::LibertyCell* predicted_libcell = network_->findLibertyCell(libcell_name.c_str());
-        if (!predicted_libcell) {
-          logger_->error(utl::RSZ, 1047, "Cannot find LibertyCell {} (applyPredictions)", 
-                        libcell_name);
-          failed_resizing++;
-          continue;
-        }
-
-        // Check if resizer_->dontTouch(drvr) is true, if so, skip the cell
-        if (resizer_->dontTouch(drvr)) {
-          skipped_cells[cell_id] = cell_name;
-          continue;
-        }
-
-        // Try to resize the cell
-        bool resize_success = resizer_->replaceCell(drvr, predicted_libcell, true);
-        if (resize_success) {
-          updated_cells[cell_id] = cell_name;
-          num_resized_cells++;
-        } else {
-          logger_->error(utl::RSZ, 1048, "Failed to resize cell {} to libcell {} (applyPredictions)", 
-                        cell_name, libcell_name);
-          failed_resizing++;
-        }
+        
       }
 
-      // Print summary statistics
+      // Print resizing summary statistics
       std::cout << "\nCell Resizing Summary:\n";
       std::cout << "====================\n";
       std::cout << "Total cells in design: " << network_->instanceCount() << "\n";
@@ -1281,7 +1386,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       // Print first few updated and skipped cells for verification
       const size_t max_print = 5;
       std::cout << "\nFirst " << max_print << " Updated Cells:\n";
-      std::cout << "Cell Name -> New Liberty Cell\n";
+      std::cout << "Cell Name -> New Liberty Libcell\n";
       size_t print_count = 0;
       for (const auto& [id, libcell] : updated_cells) {
         if (print_count++ >= max_print) break;
@@ -1289,18 +1394,53 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       }
 
       std::cout << "\nFirst " << max_print << " Skipped Cells (don't touch):\n";
-      std::cout << "Cell Name -> Predicted Liberty Cell\n";
+      std::cout << "Cell Name -> Predicted Liberty Libcell\n";
       print_count = 0;
       for (const auto& [id, libcell] : skipped_cells) {
         if (print_count++ >= max_print) break;
         std::cout << cell_id_to_name[id] << " -> " << libcell << "\n";
       }
 
-      // Print .size file in standard output
-      // Format: cell_name, libcell_name
-      // For all cells in the design
-      //std::cout << "\nPredicted .size File:\n";
-      //std::cout << "====================\n";
+
+      // Save .size file with the predicted libcell IDs
+      // The .size file format is cell_name, libcell_name for each line
+      // The .size file is saved in the same directory as the output_base_path
+      std::filesystem::path predicted_size_file_export_path = std::filesystem::path(output_base_path) / "predicted.size";
+      // Iterate through every instance in the design and write the cell name and predicted libcell name to the .size file
+      std::ofstream predicted_size_file(predicted_size_file_export_path);
+      if (!predicted_size_file) {
+        logger_->error(utl::RSZ, 1054, "Cannot open file {} for writing (predicted.size)", 
+                      predicted_size_file_export_path.string());
+      } else {
+        // Iterate through all instances in the design
+        odb::dbSet<dbInst> insts = sta_->db()->getChip()->getBlock()->getInsts();
+        //dbInst* db_inst;
+        
+        size_t written_cells = 0;
+        for (odb::dbInst* db_inst : insts) {
+            
+          std::string cell_name = db_inst->getName();
+          sta::Instance* inst = db_network_->dbToSta(db_inst);
+          if (!inst)
+            continue;
+            
+          sta::Cell* cell = network_->cell(inst);
+          if (!cell)
+            continue;
+            
+          std::string libcell_name = network_->name(cell);
+          
+          // Write cell_name and libcell_name to .size file
+          predicted_size_file << cell_name << " " << libcell_name << std::endl;
+          written_cells++;
+        }
+        
+        std::cout << "Successfully wrote " << written_cells << " cells to " << predicted_size_file_export_path.string() << std::endl;
+        predicted_size_file.close();
+      }
+      
+
+
 
 
 
