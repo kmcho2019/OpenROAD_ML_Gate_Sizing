@@ -851,17 +851,17 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     // Read .size file to get cell->libcell mapping
     std::unordered_map<std::string, std::string> cell_name_to_libcell_name = readSizeFile(label_size_file_path);
     std::unordered_map<int, int> cell_id_to_libcell_id;
-    for (const auto& [cell_name, libcell_name] : cell_name_to_libcell_name) {
+    for (const auto& [inst_cell_name, libcell_name] : cell_name_to_libcell_name) {
       // Lookup cell ID - skip if not found
-      auto cell_it = cell_name_to_id.find(cell_name);
-      if (cell_it == cell_name_to_id.end()) continue;
+      auto inst_cell_it = cell_name_to_id.find(inst_cell_name);
+      if (inst_cell_it == cell_name_to_id.end()) continue;
 
       // Lookup libcell ID - skip if not found
       auto libcell_it = libcell_to_id_.find(libcell_name);
       if (libcell_it == libcell_to_id_.end()) continue;
 
       // Only insert if both IDs exist
-      cell_id_to_libcell_id[cell_it->second] = libcell_it->second;
+      cell_id_to_libcell_id[inst_cell_it->second] = libcell_it->second;
     }
     std::vector<std::vector<int>> labels; // (N, L/2) for each cell, the corresponding libcell's order within same type
     // Example if libcells 1, 4, and 7 are the same type, then the labels for the cells are 0, 1, 2
@@ -1517,7 +1517,7 @@ void MLGateSizer::writeBinaryFile2DInt(const std::string& filename,
 }
 
 // Read .size file to generate labels
-// .size format: libcell_name, libcell_type_id for each line of the file
+// .size format: inst_name, libcell_name for each line of the file
 std::unordered_map<std::string, std::string> MLGateSizer::readSizeFile(const std::string& filename)
 {
     std::unordered_map<std::string, std::string> libcell_to_type;
@@ -1530,12 +1530,12 @@ std::unordered_map<std::string, std::string> MLGateSizer::readSizeFile(const std
     std::string line;
     while (std::getline(in, line)) {
         std::istringstream iss(line);
-        std::string libcell_name, libcell_type;
-        if (!(iss >> libcell_name >> libcell_type)) {
+        std::string inst_name, libcell_type;
+        if (!(iss >> inst_name >> libcell_type)) {
             logger_->error(utl::RSZ, 1006, "Error reading line from file {} (readSizeFile)", filename);
             return libcell_to_type;
         }
-        libcell_to_type[libcell_name] = libcell_type;
+        libcell_to_type[inst_name] = libcell_type;
     }
 
     return libcell_to_type;
