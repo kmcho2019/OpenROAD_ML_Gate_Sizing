@@ -235,7 +235,8 @@ public:
 								// Add embedding
 								int libcell_id = libcell_to_id_.at(metrics.cell_type);
 								int libcell_type_id = libcell_to_type_id_.at(metrics.cell_type);
-								const auto& embedding = libcell_embeddings_.at(libcell_type_id);
+								//const auto& embedding = libcell_embeddings_.at(libcell_type_id);
+								const auto& embedding = libcell_embeddings_.at(libcell_id);
 								std::copy(embedding.begin(), embedding.end(), 
 												data_array[i][j].begin() + num_numerical_features_);
 								
