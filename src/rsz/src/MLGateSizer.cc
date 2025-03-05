@@ -94,6 +94,11 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
   //std::cout << "Debug Point 2" << std::endl;
 
+  // Number of paths to retrieve (group_count)
+  int crit_path_group_count = 100 * endpoints->size(); // 100 times the number of endpoints
+
+  // Try to measure time to retrieve critical paths
+  std::chrono::steady_clock::time_point crit_path_extract_begin = std::chrono::steady_clock::now();
   // Retrieve the critical path for the endpoint
   sta::PathEndSeq path_ends = sta_->search()->findPathEnds(
       nullptr,
@@ -105,7 +110,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
                               // seems to be setup time slack which is more
                               // relevant for gatesizing min/holdtime slack have
                               // to be fixed with buffer insertion)
-      5 * endpoints->size(),//10,//5 * endpoints->size(),//100, //10 * endpoints->size(), // group_count
+      crit_path_group_count,//5 * endpoints->size(),//10,//5 * endpoints->size(),//100, //10 * endpoints->size(), // group_count
       endpoints->size(),      // endpoint_count
       true,                   // unique_pins
       -sta::INF,
@@ -122,6 +127,15 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
   // consider using vertexWorstSlackPath to find the critical path for each
   // endpoint
   //std::cout << "Debug Point 3" << std::endl;
+  std::chrono::steady_clock::time_point crit_path_extract_end = std::chrono::steady_clock::now();
+
+  // Print out the time taken to retrieve critical paths
+  std::cout << "Time to retrieve " << crit_path_group_count 
+            << " critical paths: "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(
+                   crit_path_extract_end - crit_path_extract_begin)
+                   .count()
+            << " ms" << std::endl;
 
   // If no critical path is found, print a message
   if (path_ends.empty()) {
@@ -383,7 +397,8 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
 
     
-
+    // Measure time to extract data from each path
+    std::chrono::steady_clock::time_point path_data_extract_begin = std::chrono::steady_clock::now();
     
     PinSequenceCollector collector;
 
@@ -403,8 +418,6 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
                                    // included in transsizer data
       sta::Pin* prev_pin = nullptr; // used to store previous pin for arc delay or p2p_dist
       const sta::DcalcAnalysisPt* dcalc_ap = path->dcalcAnalysisPt(sta_); // used to get arc delay
-
-
 
       // Data to extract from pin:
       // [x, y, p2p_dist, hpwl, wire_cap, arc_delay, fanout, reach_end, 
@@ -671,7 +684,17 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
     }
 
+    std::chrono::steady_clock::time_point path_data_extract_end = std::chrono::steady_clock::now();
+    std::cout << "Time to extract data from each path: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(
+                     path_data_extract_end - path_data_extract_begin)
+                     .count()
+              << " ms" << std::endl;
+
     // Start processing the collected data
+
+    // Measure time to process the collected data
+    std::chrono::steady_clock::time_point path_data_process_begin = std::chrono::steady_clock::now();
 
     //std::cout << "Debug Point 5" << std::endl;
 
@@ -701,6 +724,13 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     std::vector<std::vector<int>> cell_ids = std::move(cell_ids_temp);
     std::vector<std::vector<int>> libcell_ids = std::move(libcell_ids_temp);
     std::vector<std::vector<int>> libcell_type_ids = std::move(libcell_type_ids_temp);
+
+    std::chrono::steady_clock::time_point path_data_process_end = std::chrono::steady_clock::now();
+    std::cout << "Time to process the collected data: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(
+                     path_data_process_end - path_data_process_begin)
+                     .count()
+              << " ms" << std::endl;
 
     
     // Debugging print statements to check data_array and libcell_type_ids
@@ -1051,6 +1081,10 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     // Test using loaded model if transformer_weights_ is not empty
     if (transformer_weights_.loaded) {
 
+      // Debugging flag to skip inference
+      // Set to true to skip inference, all predicted indices will be 0
+      bool skip_inference = true; 
+
       // Check if transformer_weights_ are loaded properly and actually contain the weights
       // Iterate through the weights and print the shape of each weight
       // Print projection matrices dimensions
@@ -1093,15 +1127,27 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
           std::cout << "FF_b2: " << transformer_weights_.encoder2_0_FF_b2_2[layer].size() << std::endl;
       }
 
-      auto start_ = std::chrono::steady_clock::now();
-      auto loaded_eigen_output = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, D_out, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2, transformer_weights_);
-      auto end_ = std::chrono::steady_clock::now();
 
-      auto loaded_eigen_us = std::chrono::duration_cast<std::chrono::microseconds>(end_ - start_).count();
+      std::vector<std::vector<std::vector<float>>> loaded_eigen_output;
+      if (skip_inference) {
+        std::cout << "Skipping inference" << std::endl;
+        // Set loaded_eigen_output to all zeros
+        loaded_eigen_output = std::vector<std::vector<std::vector<float>>>(N, std::vector<std::vector<float>>(L/2, std::vector<float>(D_out, 0.0)));
+      }
+      else {
+        std::cout << "Running inference" << std::endl;
 
-      std::cout << "Loaded Eigen  time: " << loaded_eigen_us << " us   => "
-                << (1e6 * double(total_tokens) / double(loaded_eigen_us))
-                << " tokens/sec\n";
+        auto start_ = std::chrono::steady_clock::now();
+        loaded_eigen_output = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, D_out, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2, transformer_weights_);
+        auto end_ = std::chrono::steady_clock::now();
+  
+        auto loaded_eigen_us = std::chrono::duration_cast<std::chrono::microseconds>(end_ - start_).count();
+  
+        std::cout << "Loaded Eigen  time: " << loaded_eigen_us << " us   => "
+                  << (1e6 * double(total_tokens) / double(loaded_eigen_us))
+                  << " tokens/sec\n";
+  
+      }
 
       // Based on loaded_eigen_output, determine gate sizes, calculate accuracy (compared to label), and apply the gate sizes to the design
       // The loaded_eigen_output is in the shape (N, L/2, D_out) where D_out is the number of classes
@@ -1230,7 +1276,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       }
 
       // Debugging flag, use label .size file to resize the cells in the design
-      bool use_label_to_resize = false;
+      bool use_label_to_resize = true;
       std::map<int, std::string> updated_cells; 
       std::map<int, std::string> skipped_cells;
       size_t num_resized_cells = 0;
