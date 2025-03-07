@@ -94,35 +94,42 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
   //std::cout << "Debug Point 2" << std::endl;
 
+
+  // Number of paths for each endpoint (endpoint_count)
+  int crit_path_endpoint_count = 4;//1000; // 1000 path for each endpoint
+
+
   // Number of paths to retrieve (group_count)
-  int crit_path_group_count = 100 * endpoints->size(); // 100 times the number of endpoints
+  int crit_path_group_count = 2 * endpoints->size();//1000 * endpoints->size(); // 2 times the number of endpoints
 
   // Try to measure time to retrieve critical paths
   std::chrono::steady_clock::time_point crit_path_extract_begin = std::chrono::steady_clock::now();
   // Retrieve the critical path for the endpoint
+  // PathEnds represent search endpoints that are either unconstrained or
+  // constrained by a timing check, output delay, data check, or path delay.
   sta::PathEndSeq path_ends = sta_->search()->findPathEnds(
-      nullptr,
-      nullptr,
-      nullptr,  // exception_to, // test if exception_to is causing the issue
-      false,
-      sta_->cmdCorner(),
+      nullptr,  // e_from, return paths from a list of clocks/instances/ports/register clock pins or latch data pins
+      nullptr,  // e_thrus, return paths through a list of instances/ports/nets
+      nullptr,  // exception_to, return paths to a list of clocks/instances/ports or pins // test if exception_to is causing the issue
+      false,    // include_unconstrained, return unconstrained paths
+      sta_->cmdCorner(),  // corner, returns paths for a process corner
       sta::MinMaxAll::max(),  // using min leads to no critical paths found (max
                               // seems to be setup time slack which is more
                               // relevant for gatesizing min/holdtime slack have
                               // to be fixed with buffer insertion)
-      crit_path_group_count,//5 * endpoints->size(),//10,//5 * endpoints->size(),//100, //10 * endpoints->size(), // group_count
-      endpoints->size(),      // endpoint_count
+      crit_path_group_count,//5 * endpoints->size(),//10,//5 * endpoints->size(),//100, //10 * endpoints->size(), // group_count, number of paths in total
+      crit_path_endpoint_count, //endpoints->size(),      // endpoint_count, number of paths for each endpoint
       true,                   // unique_pins
       -sta::INF,
-      sta::INF,  // slack_min, slack_max
-      true,      // sort_by_slack
-      nullptr,   // group_names
-      true,
-      false,
-      false,
-      false,
-      false,
-      false);
+      sta::INF, // slack_min, slack_max
+      true,     // sort_by_slack
+      nullptr,  // group_names
+      true,     // setup
+      false,    // hold
+      false,    // recovery
+      false,    // removal
+      false,    // clk_gating_setup
+      false);   // clk_gating_hold
   // In addition or alternatively,
   // consider using vertexWorstSlackPath to find the critical path for each
   // endpoint
@@ -136,10 +143,178 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
                    crit_path_extract_end - crit_path_extract_begin)
                    .count()
             << " ms" << std::endl;
+  std::cout << "Extracted " << path_ends.size() << " critical paths from endpoint." << std::endl;
+  
+
+  // Also extract worst paths between registers (flipflop to flipflop)
+  std::cout << "Extracting worst paths between registers..." << std::endl;
+  sta::PathRefSeq register_to_register_paths;
+  std::unordered_set<sta::Vertex*> processed_vertices; // Avoid duplicates
+
+///////////////////////////////
+
+
+  // // Get all instances in the design
+  // odb::dbSet<dbInst> insts = sta_->db()->getChip()->getBlock()->getInsts();
+
+  // // First pass: identify all register cells
+  // std::vector<sta::Instance*> register_insts;
+  // for (dbInst* db_inst : insts) {
+  //   sta::Instance* inst = db_network_->dbToSta(db_inst);
+  //   if (!inst) continue;
+    
+  //   sta::Cell* cell = network_->cell(inst);
+  //   if (!cell) continue;
+    
+  //   sta::LibertyCell* lib_cell = network_->libertyCell(inst);
+  //   if (!lib_cell) continue;
+    
+  //   // Check if this is a sequential cell (flipflop)
+  //   if (lib_cell->hasSequentials()) {
+  //     register_insts.push_back(inst);
+  //   }
+  // }
+
+  // std::cout << "Found " << register_insts.size() << " registers in the design" << std::endl;
+
+  // // Second pass: find worst path to each register's data input pin
+  // std::chrono::steady_clock::time_point reg2reg_extract_begin = std::chrono::steady_clock::now();
+  // int reg2reg_path_count = 0;
+
+  // for (sta::Instance* reg : register_insts) {
+  //   // For each register, find its data pin(s)
+  //   sta::LibertyCell* lib_cell = network_->libertyCell(reg);
+  //   if (!lib_cell) continue;
+
+  //   // Get all pins of this instance
+  //   sta::InstancePinIterator* pin_iter = network_->pinIterator(reg);
+  //   std::vector<sta::Pin*> data_pins;
+
+  //   // Iterate through all pins to find data input pins
+  //   while (pin_iter->hasNext()) {
+  //     sta::Pin* pin = pin_iter->next();
+
+  //     // Debugging information print Instance + Pin name
+  //     std::cout << "Register: " << network_->name(reg) << " Pin: " << network_->name(pin) << std::endl;
+
+  //     sta::LibertyPort* lib_port = network_->libertyPort(pin);
+  //     if (!lib_port) continue;
+      
+  //     // Checking for clock might be causing issues as no path is being found
+  //     /** 
+  //     // Check if this is a data input pin
+  //     // It should be an input pin, not a clock, reset, set, clear, etc.
+  //     if (lib_port->direction() == sta::PortDirection::input() && 
+  //         !lib_port->isClock()) {
+  //       data_pins.push_back(pin);
+  //     }
+  //      */
+  //     data_pins.push_back(pin);
+
+  //   }
+  //   delete pin_iter;
+  
+    
+  //   // For each data pin, find the worst slack path to it
+  //   for (sta::Pin* data_pin : data_pins) {
+  //     sta::Vertex* vertex = graph_->pinLoadVertex(data_pin);
+  //     if (!vertex) continue;
+      
+  //     // Skip if we've already processed this vertex
+  //     if (processed_vertices.find(vertex) != processed_vertices.end()) {
+  //       continue;
+  //     }
+
+  //     // Print debugging information about pin and vertex
+  //     std::cout << "Register: " << network_->name(reg) << " Pin: " << network_->name(data_pin) << " Vertex: " << vertex->name(network_) << std::endl;
+      
+  //     // Find worst slack path to this pin
+  //     sta::PathRef worst_path = sta_->vertexWorstSlackPath(vertex, sta::MinMax::max());
+
+  //     // Print debugging information about the worst path
+  //     // If path is null, print a message
+  //     // If path is not null, print the path length and the path itself (vertex/pin names along the path)
+  //     if (worst_path.isNull()) {
+  //       std::cout << "No worst path found for vertex " << vertex->name(network_) << std::endl;
+  //       continue;
+  //     }
+  //     else {
+  //       sta::PathExpanded expanded(&worst_path, sta_);
+  //       int path_length = expanded.size();
+  //       std::cout << "Worst path found for vertex " << vertex->name(network_) << " with length: " << path_length << std::endl;
+  //       int start_index = expanded.startIndex();
+  //       for (size_t i = start_index; i < path_length; i++) {
+  //         const sta::PathRef* path = expanded.path(i);
+  //         const sta::Vertex* path_vertex = path->vertex(sta_);
+  //         const sta::Pin* path_pin = path->pin(sta_);
+  //         std::cout << "Path " << i << ": " << path_vertex->name(network_) << " Pin: " << network_->name(path_pin) << std::endl;
+  //       }
+  //       std::cout << std::endl;
+
+  //     }
+
+
+
+  //     if (worst_path.isNull()) continue; // Skip null paths
+      
+  //     // Store this path
+  //     register_to_register_paths.push_back(worst_path);
+  //     processed_vertices.insert(vertex);
+  //     reg2reg_path_count++;
+  //   }
+  // }
+
+  // std::chrono::steady_clock::time_point reg2reg_extract_end = std::chrono::steady_clock::now();
+
+  // // Print out the time taken to retrieve worst slack paths for each endpoint
+  // std::cout << "Time to retrieve worst paths between registers: "
+  //           << std::chrono::duration_cast<std::chrono::milliseconds>(
+  //             reg2reg_extract_end - reg2reg_extract_begin)
+  //                  .count()
+  //           << " ms" << std::endl;
+  // std::cout << "Extracted " << reg2reg_path_count << " worst paths between registers." << std::endl;
+
+  // // Try alternative method to find worst paths between registers by using findPathEnds
+  // // Define ExceptionFrom and ExceptionTo using the register instances (sta::InstanceSet)
+  // sta::InstanceSet* register_insts_set = new sta::InstanceSet(network_);
+  // for (sta::Instance* reg : register_insts) {
+  //   std::cout << "Register: " << network_->name(reg) << std::endl;
+  //   register_insts_set->insert(reg);
+    
+  // }
+
+  // sta::RiseFallBoth* reg_rf = sta::RiseFallBoth::riseFall();
+  // std::cout << "Initializing ExceptionTo" << std::endl;
+  // sta::ExceptionTo* regs_to = sta_->makeExceptionTo(nullptr, nullptr, register_insts_set, reg_rf, reg_rf);
+  // std::cout << "Initializing ExceptionFrom" << std::endl;
+  // sta::ExceptionFrom* regs_from = sta_->makeExceptionFrom(nullptr, nullptr, register_insts_set, reg_rf);
+  // std::cout << "Finding worst paths between registers using findPathEnds..." << std::endl;
+  // sta::PathEndSeq ff_paths = sta_->search()->findPathEnds(
+  //   regs_from,    // from register clock pins
+  //   nullptr,      // through
+  //   regs_to,      // to register data pins
+  //   false,        // unconstrained
+  //   sta_->cmdCorner(),
+  //   sta::MinMaxAll::max(),
+  //   100,          // group_count
+  //   1,            // endpoint_count
+  //   true,         // unique pins
+  //   -sta::INF,    // slack_min
+  //   sta::INF,     // slack_max
+  //   true,         // sort by slack
+  //   nullptr,
+  //   true,         // setup
+  //   false,        // hold
+  //   false, false, false, false);
+  // std::cout << "Found " << ff_paths.size() << " worst paths between registers using findPathEnds" << std::endl;
+
+///////////////////////////
+
+
 
   // If no critical path is found, print a message
-  if (path_ends.empty()) {
-    std::cout << "No critical paths found " << std::endl;
+  if (path_ends.empty() && register_to_register_paths.empty()) {
+    std::cout << "No critical paths or paths between registers found " << std::endl;
   } else {
 
     int path_count = 0;
@@ -683,6 +858,26 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
 
     }
+
+
+    // Tempoarily commented out, seems to cause segfault
+/*
+    // Also extract data from endpoint_worst_slack_paths
+    for (sta::PathRef end_path_ref: endpoint_worst_slack_paths) {
+      sta::Path* path = end_path_ref.path();
+      float slack = end_path_ref.slack(sta_);
+      path_slacks.push_back(slack);
+      sta::PathExpanded expand(end_path_ref.path(), sta_);
+      expand.path(expand.size() - 1);
+
+      float p2p_dist = 0.0;
+
+    }
+*/
+
+    
+
+    
 
     std::chrono::steady_clock::time_point path_data_extract_end = std::chrono::steady_clock::now();
     std::cout << "Time to extract data from each path: "
@@ -1419,6 +1614,10 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
         
       }
+
+      // Total number of unique cell/instances collected within path
+      // Use cell_id_to_name to get total number of unique cell_ids
+      std::cout << "Total number of unique cells collected in path: " << cell_id_to_name.size() << std::endl;
 
       // Print resizing summary statistics
       std::cout << "\nCell Resizing Summary:\n";
