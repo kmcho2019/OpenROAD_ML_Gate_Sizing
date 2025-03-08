@@ -154,28 +154,28 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 ///////////////////////////////
 
 
-  // // Get all instances in the design
-  // odb::dbSet<dbInst> insts = sta_->db()->getChip()->getBlock()->getInsts();
+  // Get all instances in the design
+  odb::dbSet<dbInst> insts_temp = sta_->db()->getChip()->getBlock()->getInsts();
 
-  // // First pass: identify all register cells
-  // std::vector<sta::Instance*> register_insts;
-  // for (dbInst* db_inst : insts) {
-  //   sta::Instance* inst = db_network_->dbToSta(db_inst);
-  //   if (!inst) continue;
+  // First pass: identify all register cells
+  std::vector<sta::Instance*> register_insts;
+  for (dbInst* db_inst : insts_temp) {
+    sta::Instance* inst = db_network_->dbToSta(db_inst);
+    if (!inst) continue;
     
-  //   sta::Cell* cell = network_->cell(inst);
-  //   if (!cell) continue;
+    sta::Cell* cell = network_->cell(inst);
+    if (!cell) continue;
     
-  //   sta::LibertyCell* lib_cell = network_->libertyCell(inst);
-  //   if (!lib_cell) continue;
+    sta::LibertyCell* lib_cell = network_->libertyCell(inst);
+    if (!lib_cell) continue;
     
-  //   // Check if this is a sequential cell (flipflop)
-  //   if (lib_cell->hasSequentials()) {
-  //     register_insts.push_back(inst);
-  //   }
-  // }
+    // Check if this is a sequential cell (flipflop)
+    if (lib_cell->hasSequentials()) {
+      register_insts.push_back(inst);
+    }
+  }
 
-  // std::cout << "Found " << register_insts.size() << " registers in the design" << std::endl;
+  std::cout << "Found " << register_insts.size() << " registers in the design" << std::endl;
 
   // // Second pass: find worst path to each register's data input pin
   // std::chrono::steady_clock::time_point reg2reg_extract_begin = std::chrono::steady_clock::now();
@@ -274,46 +274,16 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
   //           << " ms" << std::endl;
   // std::cout << "Extracted " << reg2reg_path_count << " worst paths between registers." << std::endl;
 
-  // // Try alternative method to find worst paths between registers by using findPathEnds
-  // // Define ExceptionFrom and ExceptionTo using the register instances (sta::InstanceSet)
-  // sta::InstanceSet* register_insts_set = new sta::InstanceSet(network_);
-  // for (sta::Instance* reg : register_insts) {
-  //   std::cout << "Register: " << network_->name(reg) << std::endl;
-  //   register_insts_set->insert(reg);
-    
-  // }
 
-  // sta::RiseFallBoth* reg_rf = sta::RiseFallBoth::riseFall();
-  // std::cout << "Initializing ExceptionTo" << std::endl;
-  // sta::ExceptionTo* regs_to = sta_->makeExceptionTo(nullptr, nullptr, register_insts_set, reg_rf, reg_rf);
-  // std::cout << "Initializing ExceptionFrom" << std::endl;
-  // sta::ExceptionFrom* regs_from = sta_->makeExceptionFrom(nullptr, nullptr, register_insts_set, reg_rf);
-  // std::cout << "Finding worst paths between registers using findPathEnds..." << std::endl;
-  // sta::PathEndSeq ff_paths = sta_->search()->findPathEnds(
-  //   regs_from,    // from register clock pins
-  //   nullptr,      // through
-  //   regs_to,      // to register data pins
-  //   false,        // unconstrained
-  //   sta_->cmdCorner(),
-  //   sta::MinMaxAll::max(),
-  //   100,          // group_count
-  //   1,            // endpoint_count
-  //   true,         // unique pins
-  //   -sta::INF,    // slack_min
-  //   sta::INF,     // slack_max
-  //   true,         // sort by slack
-  //   nullptr,
-  //   true,         // setup
-  //   false,        // hold
-  //   false, false, false, false);
-  // std::cout << "Found " << ff_paths.size() << " worst paths between registers using findPathEnds" << std::endl;
+
+
 
 ///////////////////////////
 
 
 
   // If no critical path is found, print a message
-  if (path_ends.empty() && register_to_register_paths.empty()) {
+  if (path_ends.empty()) {
     std::cout << "No critical paths or paths between registers found " << std::endl;
   } else {
 
@@ -571,7 +541,8 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
   
 
 
-    
+    std::cout << "Extracting data from critical paths..." << std::endl;
+    std::cout << "Number of critical paths: " << path_ends.size() << std::endl;    
     // Measure time to extract data from each path
     std::chrono::steady_clock::time_point path_data_extract_begin = std::chrono::steady_clock::now();
     
@@ -579,11 +550,13 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
     for (auto& path_end : path_ends) {  // similar usage found in TritonPart.cpp
                                         // BuildTimingPaths()
-      //std::cout << "Critical Path " << path_count << std::endl;
+      // std::cout << "Critical Path " << path_count << std::endl;
       auto* path = path_end->path();
+      //std::cout << "Is Path Null : " << path->isNull() << std::endl;
+      //std::cout << "Path Slack: " << path->slack(sta_) << std::endl;
       float slack = path_end->slack(sta_);
       path_slacks.push_back(slack);
-      //std::cout << "Slack: " << slack << std::endl;
+      // std::cout << "Slack: " << slack << std::endl;
       sta::PathExpanded expand(path, sta_);
       expand.path(expand.size() - 1);
       float p2p_dist = 0.0;
@@ -848,7 +821,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       }
       path_count++;
 
-      //std::cout << "Debug Point 4" << std::endl;
+      // std::cout << "Debug Point 4" << std::endl;
 
       // Finalize the collection
       collector.finalize();
@@ -885,6 +858,58 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
                      path_data_extract_end - path_data_extract_begin)
                      .count()
               << " ms" << std::endl;
+
+
+    // Try extracting from register paths after extracting from critical paths
+    // Running second findPathEnds() to get register paths seems to cause segfault when retrieving path data from the critical paths
+    // Run order which causes segfault:
+    // - (1) Extract data from critical paths using findPathEnds()
+    // - (2) Extract data from register paths using findPathEnds()
+    // - (3) Extract data from critical paths extracted in (1) <- causes segfault (The sta::Path from sta::PathEnds->path() seems to be null)
+    // New order attempt to avoid segfault:
+    // - (1) Extract data from critical paths using findPathEnds()
+    // - (2) Extract data from critical paths extracted in (1)
+    // - (3) Extract data from register paths using findPathEnds()
+    // - (4) Extract data from register paths extracted in (3)
+    // Alternative method is try using something like vertexWorstSlackPaths() to get register paths,
+    // but when it was initially tried no paths from the register paths was found using it
+
+    // Try alternative method to find worst paths between registers by using findPathEnds
+    // Define ExceptionFrom and ExceptionTo using the register instances (sta::InstanceSet)
+    sta::InstanceSet* register_insts_set = new sta::InstanceSet(network_);
+    for (sta::Instance* reg : register_insts) {
+      //std::cout << "Register: " << network_->name(reg) << std::endl;
+      register_insts_set->insert(reg);
+      
+    }
+
+    const sta::RiseFallBoth* reg_rf = sta::RiseFallBoth::riseFall();
+    // std::cout << "Initializing ExceptionTo" << std::endl;
+    sta::ExceptionTo* regs_to = nullptr;//sta_->makeExceptionTo(nullptr, nullptr, register_insts_set, reg_rf, reg_rf);
+    std::cout << "Initializing ExceptionFrom" << std::endl;
+    sta::ExceptionFrom* regs_from = sta_->makeExceptionFrom(nullptr, nullptr, register_insts_set, reg_rf);
+    std::cout << "Finding worst paths between registers using findPathEnds..." << std::endl;
+    sta::PathEndSeq ff_paths = sta_->search()->findPathEnds(
+      regs_from,    // from register clock pins
+      nullptr,      // through
+      regs_to,      // to register data pins
+      false,        // unconstrained
+      sta_->cmdCorner(),
+      sta::MinMaxAll::max(),
+      10,          // group_count
+      1,            // endpoint_count
+      true,         // unique pins
+      -sta::INF,    // slack_min
+      sta::INF,     // slack_max
+      true,         // sort by slack
+      nullptr,
+      true,         // setup
+      false,        // hold
+      false, false, false, false);
+    std::cout << "Found " << ff_paths.size() << " worst paths between registers using findPathEnds" << std::endl;
+    for (sta::PathEnd* ff_path_end : ff_paths) {
+      std::cout << "FF Path Slack: " << ff_path_end->slack(sta_) << std::endl;
+    }
 
     // Start processing the collected data
 
