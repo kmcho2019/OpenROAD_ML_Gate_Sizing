@@ -876,40 +876,343 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
     // Try alternative method to find worst paths between registers by using findPathEnds
     // Define ExceptionFrom and ExceptionTo using the register instances (sta::InstanceSet)
-    sta::InstanceSet* register_insts_set = new sta::InstanceSet(network_);
-    for (sta::Instance* reg : register_insts) {
-      //std::cout << "Register: " << network_->name(reg) << std::endl;
-      register_insts_set->insert(reg);
+    // sta::InstanceSet* register_insts_set = new sta::InstanceSet(network_);
+    // for (sta::Instance* reg : register_insts) {
+    //   //std::cout << "Register: " << network_->name(reg) << std::endl;
+    //   register_insts_set->insert(reg);
       
-    }
+    // }
 
-    const sta::RiseFallBoth* reg_rf = sta::RiseFallBoth::riseFall();
-    // std::cout << "Initializing ExceptionTo" << std::endl;
-    sta::ExceptionTo* regs_to = nullptr;//sta_->makeExceptionTo(nullptr, nullptr, register_insts_set, reg_rf, reg_rf);
-    std::cout << "Initializing ExceptionFrom" << std::endl;
-    sta::ExceptionFrom* regs_from = sta_->makeExceptionFrom(nullptr, nullptr, register_insts_set, reg_rf);
-    std::cout << "Finding worst paths between registers using findPathEnds..." << std::endl;
-    sta::PathEndSeq ff_paths = sta_->search()->findPathEnds(
-      regs_from,    // from register clock pins
-      nullptr,      // through
-      regs_to,      // to register data pins
-      false,        // unconstrained
-      sta_->cmdCorner(),
-      sta::MinMaxAll::max(),
-      10,          // group_count
-      1,            // endpoint_count
-      true,         // unique pins
-      -sta::INF,    // slack_min
-      sta::INF,     // slack_max
-      true,         // sort by slack
-      nullptr,
-      true,         // setup
-      false,        // hold
-      false, false, false, false);
-    std::cout << "Found " << ff_paths.size() << " worst paths between registers using findPathEnds" << std::endl;
-    for (sta::PathEnd* ff_path_end : ff_paths) {
-      std::cout << "FF Path Slack: " << ff_path_end->slack(sta_) << std::endl;
-    }
+    // sta::RiseFallBoth* reg_rf = sta::RiseFallBoth::riseFall();
+    // // std::cout << "Initializing ExceptionTo" << std::endl;
+    // sta::ExceptionTo* regs_to = nullptr;//sta_->makeExceptionTo(nullptr, nullptr, register_insts_set, reg_rf, reg_rf);
+    // std::cout << "Initializing ExceptionFrom" << std::endl;
+    // sta::ExceptionFrom* regs_from = sta_->makeExceptionFrom(nullptr, nullptr, register_insts_set, reg_rf);
+    // std::cout << "Finding worst paths between registers using findPathEnds..." << std::endl;
+
+    // // Meausre time to find worst paths between registers
+    // std::chrono::steady_clock::time_point reg_path_find_begin = std::chrono::steady_clock::now();
+    // sta::PathEndSeq ff_paths = sta_->search()->findPathEnds(
+    //   regs_from,    // from register clock pins
+    //   nullptr,      // through
+    //   regs_to,      // to register data pins
+    //   false,        // unconstrained
+    //   sta_->cmdCorner(),
+    //   sta::MinMaxAll::max(),
+    //   10,//5 * register_insts.size(),          // group_count
+    //   10,            // endpoint_count
+    //   true,         // unique pins
+    //   -sta::INF,    // slack_min
+    //   sta::INF,     // slack_max
+    //   true,         // sort by slack
+    //   nullptr,
+    //   true,         // setup
+    //   false,        // hold
+    //   false, false, false, false);
+    // std::chrono::steady_clock::time_point reg_path_find_end = std::chrono::steady_clock::now();
+    // std::cout << "Time to find worst paths between registers using findPathEnds: "
+    //           << std::chrono::duration_cast<std::chrono::milliseconds>(
+    //                  reg_path_find_end - reg_path_find_begin)
+    //                  .count()
+    //           << " ms" << std::endl;
+    // std::cout << "Found " << ff_paths.size() << " worst paths between registers using findPathEnds" << std::endl;
+
+    // // Extract data from ff_paths
+    // std::cout << "Extracting data from worst paths between registers..." << std::endl;
+    // std::cout << "Number of worst paths between registers: " << ff_paths.size() << std::endl;
+    // // Measure time to extract data from each path
+    // std::chrono::steady_clock::time_point reg_path_data_extract_begin = std::chrono::steady_clock::now();
+
+    // for (auto& path_end : ff_paths) {  // similar usage found in TritonPart.cpp
+    //                                     // BuildTimingPaths()
+    //   std::cout << "Critical Path " << path_count << std::endl;
+    //   auto* path = path_end->path();
+    //   if ((path->isNull())) {
+    //     std::cout << "Path is null" << std::endl;
+    //     continue;
+    //   }
+    //   //std::cout << "Is Path Null : " << path->isNull() << std::endl;
+    //   std::cout << "Path Slack: " << path->slack(sta_) << std::endl;
+    //   float slack = path_end->slack(sta_);
+    //   path_slacks.push_back(slack);
+    //   std::cout << "Slack: " << slack << std::endl;
+    //   sta::PathExpanded expand(path, sta_);
+    //   expand.path(expand.size() - 1);
+    //   float p2p_dist = 0.0;
+    //   float prev_x = 0.0;
+    //   float prev_y = 0.0;
+    //   bool is_port = false;        // check if pin is a port, port shouldn't be
+    //                                // included in transsizer data
+    //   sta::Pin* prev_pin = nullptr; // used to store previous pin for arc delay or p2p_dist
+    //   const sta::DcalcAnalysisPt* dcalc_ap = path->dcalcAnalysisPt(sta_); // used to get arc delay
+
+    //   // Data to extract from pin:
+    //   // [x, y, p2p_dist, hpwl, wire_cap, arc_delay, fanout, reach_end, 
+    //   // gate_type_id, mdelay, num_refs, maxcap, maxtran, tran, slack, 
+    //   // risearr, fallarr, cap]
+    //   for (size_t i = 0; i < expand.size(); i++) {
+    //       // PinMetrics object initialization
+    //       PinMetrics pin_metrics;
+    //       // Core object retrieval
+    //       sta::PathRef* ref = expand.path(i); // PathRef is reference to a path vertex
+    //       sta::Pin* pin = ref->vertex(sta_)->pin();
+    //       sta::Net* net = network_->net(pin);
+    //       sta::Instance* inst = network_->instance(pin);
+    //       sta::LibertyPort* lib_port = network_->libertyPort(pin);
+
+    //       sta::Vertex* vertex = graph_->pinLoadVertex(pin);
+
+    //       // DB object retrieval
+    //       dbInst* db_inst = db_network_->staToDb(inst);
+    //       dbNet* db_net = net ? db_network_->staToDb(net) : nullptr;
+    //       odb::dbITerm* iterm;
+    //       odb::dbBTerm* bterm;
+    //       odb::dbModITerm* moditerm;
+    //       odb::dbModBTerm* modbterm;
+    //       db_network_->staToDb(pin, iterm, bterm, moditerm, modbterm);
+
+    //       // Pin state flags
+    //       is_port = network_->isTopLevelPort(pin);
+    //       bool is_supply_pin = (iterm && iterm->getSigType().isSupply()) || 
+    //                           (bterm && bterm->getSigType().isSupply());
+    //       bool is_in_clock_nets = false; // check if pin is in clock nets indicates /CLK pin
+    //       bool is_in_clock = false; // check if pin's instance is connected to a clock net, either a sequential cell or a buffer/inverter cell connected to a clock net
+    //       bool is_sequential = false; // check if the cell is a sequential cell
+    //       bool is_macro = false; // check if cell is a macro/block cell
+    //       if (is_port) {
+    //           is_in_clock = false;
+    //       } else {
+    //           if (net && db_net && clk_nets.find(db_net) != clk_nets.end()) {
+    //               is_in_clock_nets = true;
+    //           }
+    //       }
+    //       if (db_inst) {
+    //           for (odb::dbITerm* term : db_inst->getITerms()) {
+    //               if (term->getNet() && term->getNet()->getSigType() == odb::dbSigType::CLOCK) {
+    //                   is_in_clock = true;
+    //                   break;
+    //               }
+    //           }
+    //       }
+    //       if (lib_port) { // check if the cell is a sequential cell, referenced from Resizer::isRegister()
+    //         sta::LibertyCell* lib_cell = lib_port->libertyCell();
+    //         is_sequential = lib_cell && lib_cell->hasSequentials();
+    //         is_macro = lib_cell && lib_cell->isMacro();
+    //       }
+
+    //       // Location calculations
+    //       // Skips the first element of path as there is no previous pin (first element is usually a port)
+    //       Point pin_loc = db_network_->location(pin);
+    //       // Pin-to-pin distance (p2p_dist)
+    //       p2p_dist = (i > 0) ? 
+    //           std::sqrt(std::pow(pin_loc.x() - prev_x, 2) + std::pow(pin_loc.y() - prev_y, 2)) : 0.0;
+    //       // HPWL calculation (hpwl)
+    //       // -0.5 * multiplier is used in original TransSizer code, but it seems incorrect
+    //       // -Unify implementation with Python code if needed
+    //       float hpwl = (i > 0) ? 
+    //           0.5 * (std::abs(pin_loc.x() - prev_x) + std::abs(pin_loc.y() - prev_y)) : 0.0;
+
+    //       // Capacitance calculations
+    //       // Wire capacitance (net_cap)
+    //       // -Retrieves the capacitance of the net connected to the pin
+    //       // -Total connected capacitance (total_cap = pin_cap + wire_cap)
+    //       // -Corresponds to total_cap and net_cap found in CircuitOps's net_properties.csv
+    //       float pin_cap = 0.0;
+    //       float wire_cap = 0.0;
+    //       if (net) {
+    //           sta_->connectedCap(net, corner, sta::MinMax::max(), pin_cap, wire_cap);
+    //       }
+
+    //       // Fanout calculation (fanout) (calculates number of pins connected to the net of current pin)
+    //       // -Referenced from connectedPins() in rsz/src/SteinerTree.cc
+    //       int fanout = 0;
+    //       if (net) {
+    //           sta::NetConnectedPinIterator* connected_pins = network_->connectedPinIterator(net);
+    //           while (connected_pins->hasNext()) {
+    //               connected_pins->next();
+    //               fanout++;
+    //           }
+    //           delete connected_pins;
+    //           fanout--; // Subtract current pin as it is also included in the fanout
+    //       }
+
+    //       // Arc delay calculation (arc_delay)
+    //       // -Calculates the arc delay between the current pin and the previous pin of path.
+    //       // -Skips the first element of path as there is no previous pin (first element is usually a port)
+    //       // -Referenced from repairPath() at RepairSetup.cc.
+    //       sta::Delay arc_delay = 0.0;
+    //       if (prev_pin != nullptr) {
+    //           sta::TimingArc* prev_arc = expand.prevArc(i);
+    //           sta::Edge* prev_edge = ref->prevEdge(prev_arc, sta_);
+    //           arc_delay = graph_->arcDelay(prev_edge, prev_arc, dcalc_ap->index());
+    //       }
+
+    //       // Reachable endpoints (reach_end)
+    //       // Calculates the number of reachable endpoints from the current pin
+    //       int reachable_endpoints = 0;
+    //       if (net) {
+    //           sta::NetConnectedPinIterator* pin_iter = network_->connectedPinIterator(net);
+    //           while (pin_iter->hasNext()) {
+    //               const Pin* connected_pin = pin_iter->next();
+    //               if (search_->isEndpoint(graph_->pinLoadVertex(connected_pin))) {
+    //                   reachable_endpoints++;
+    //               }
+    //           }
+    //           delete pin_iter;
+    //       }
+
+    //       // Timing constraints
+    //       // Max cap and max slew calculations (maxcap, maxtran)
+    //       // -Referenced from getMaxCapLimit() and getMaxSlewLimit() in Timing.cc
+    //       // -Check if the pin is a ground or power pin, if it is, then max_cap is 0.0
+    //       // -If it is not, then get max_cap/max_slew from the liberty library
+    //       // -If max_cap/max_slew is not found, then get default max_cap/max_slew from the liberty library
+    //       float max_cap = 0.0, max_slew = 0.0;
+    //       bool max_cap_exists = false, max_slew_exists = false;
+    //       if (!is_supply_pin && !is_port) {
+    //           lib_port->capacitanceLimit(sta::MinMax::max(), max_cap, max_cap_exists);
+    //           if (!max_cap_exists) {
+    //               lib->defaultMaxCapacitance(max_cap, max_cap_exists);
+    //           }
+    //           lib_port->slewLimit(sta::MinMax::max(), max_slew, max_slew_exists);
+    //           if (!max_slew_exists) {
+    //               lib->defaultMaxSlew(max_slew, max_slew_exists);
+    //           }
+    //       }
+
+    //       // Timing measurements
+    //       // Rise and fall slew calculations of pin (tran)
+    //       // -CircuitOps used in TransSizer seems to check rise transition time only, check if this is true
+    //       // -CircuitOps seems to use getPinSlew() which is also based on slewAllCorners() in Timing.cc
+    //       // -slewAllCorners() uses sta->vertexSlew(vertex, sta::RiseFall::rise(), corner, minmax))
+    //       // -This seems to show that rise slew is used in CircuitOps's (tran) calculation
+    //       // Rise and fall arrival time calculations of pin (risearr, fallarr)
+    //       // Input pin capacitance from CircuitOp's pin_properties.csv (cap) 
+    //       // -If pin is an input pin, then input pin capacitance is calculated
+    //       // -If pin is not an input pin, then input pin capacitance is -1.0
+    //       // Slack of the pin (slack)
+    //       // -Use MinMax::max() to get max slack as used in CircuitOps
+    //       // -Circuits Ops used the min of rise and fall slack, but sta_->pinSlack(pin, sta::MinMax::max()) does seem to do this automatically
+    //       float rise_slew = vertex ? sta_->vertexSlew(vertex, sta::RiseFall::rise(), sta::MinMax::max()) : 0.0;
+    //       float fall_slew = vertex ? sta_->vertexSlew(vertex, sta::RiseFall::fall(), sta::MinMax::max()) : 0.0;
+    //       float rise_arrival_time = sta_->pinArrival(pin, sta::RiseFall::rise(), sta::MinMax::max());
+    //       float fall_arrival_time = sta_->pinArrival(pin, sta::RiseFall::fall(), sta::MinMax::max());
+    //       float input_pin_cap = (!is_port && network_->direction(pin) == sta::PortDirection::input()) ?
+    //           sta_->capacitance(lib_port, corner, sta::MinMax::max()) : -1.0;
+    //       float slack = sta_->pinSlack(pin, sta::MinMax::max());
+
+
+    //       // Cell type (gate type), retrieve the cell from the pin, then retrieve the cell type
+    //       std::string cell_type = is_port ? "Port" : network_->libertyCell(inst)->name();
+    //       std::string cell_name = is_port ? "Port" : network_->name(inst);
+
+
+
+    //       // Pin Name
+    //       std::string pin_name = network_->name(pin);
+
+
+    //       // Assign pin_id and cell_id
+    //       if (pin_name_to_id.find(pin_name) == pin_name_to_id.end()) {
+    //         // Pin name doesn't exist, add it to the map with the current pin_id
+    //         pin_name_to_id[pin_name] = pin_id;
+    //         pin_id_to_name[pin_id] = pin_name;
+    //         pin_id++;
+    //       }
+    //       if (cell_name_to_id.find(cell_name) == cell_name_to_id.end()) {
+    //         // Pin name doesn't exist, add it to the map with the current pin_id
+    //         cell_name_to_id[cell_name] = cell_id;
+    //         cell_id_to_name[cell_id] = cell_name;
+    //         cell_id++;
+    //       }
+
+          
+    //       // Output all collected data (for debugging)
+    //       float min_slack = sta_->pinSlack(pin, sta::MinMax::min());
+    //       // Network name of the pin
+    //       std::string net_name = net ? network_->name(net) : "None";
+    //       std::cout << "Pin(" << path_count << "-" << i << "): " << pin_name << "\n"
+    //                 << "X: " << pin_loc.x() << "\n"
+    //                 << "Y: " << pin_loc.y() << "\n"
+    //                 << "Pin-to-Pin Distance: " << p2p_dist << "\n"
+    //                 << "HPWL: " << hpwl << "\n"
+    //                 << "Wire Cap: " << wire_cap << "\n"
+    //                 << "Pin Cap: " << pin_cap << "\n"
+    //                 << "Total Connected Cap: " << wire_cap + pin_cap << "\n"
+    //                 << "Fanout: " << fanout << "\n"
+    //                 << "Arc Delay: " << arc_delay << "\n"
+    //                 << "Reachable Endpoints: " << reachable_endpoints << "\n"
+    //                 << "Pin's Net Name: " << net_name << "\n"
+    //                 << "Pin's Cell Name: " << cell_name << "\n"
+    //                 << "Cell Type: " << cell_type << "\n"
+    //                 << "Is In Clock Nets: " << is_in_clock_nets << "\n"
+    //                 << "Is In Clock: " << is_in_clock << "\n"
+    //                 << "Is Sequential: " << is_sequential << "\n"
+    //                 << "Is Macro: " << is_macro << "\n"
+    //                 << "Is Supply Pin: " << is_supply_pin << "\n"
+    //                 << "Max Cap: " << max_cap << "\n"
+    //                 << "Max Slew: " << max_slew << "\n"
+    //                 << "Rise/Fall Slew: " << rise_slew << "/" << fall_slew << "\n"
+    //                 << "Slack (max/min): " << slack << "/"
+    //                 << min_slack << "\n"
+    //                 << "Rise/Fall Arrival Time: " << rise_arrival_time << "/" << fall_arrival_time << "\n"
+    //                 << "Input Pin Cap: " << input_pin_cap << "\n\n";
+          
+    //       // Fill in the PinMetrics object
+    //       pin_metrics.pin_name = pin_name;
+    //       pin_metrics.cell_name = cell_name;
+    //       pin_metrics.cell_type = cell_type;
+    //       pin_metrics.x_loc = pin_loc.x();
+    //       pin_metrics.y_loc = pin_loc.y();
+    //       pin_metrics.p2p_dist = p2p_dist;
+    //       pin_metrics.hpwl = hpwl;
+    //       pin_metrics.input_pin_cap = input_pin_cap;
+    //       pin_metrics.wire_cap = wire_cap;
+    //       pin_metrics.pin_cap = pin_cap;
+    //       pin_metrics.total_cap = wire_cap + pin_cap;
+    //       pin_metrics.fanout = fanout;
+    //       pin_metrics.arc_delay = arc_delay;
+    //       pin_metrics.reachable_endpoints = reachable_endpoints;
+    //       pin_metrics.is_in_clock_nets = is_in_clock_nets;
+    //       pin_metrics.is_in_clock = is_in_clock;
+    //       pin_metrics.is_port = is_port;
+    //       pin_metrics.is_sequential = is_sequential;
+    //       pin_metrics.is_macro = is_macro;
+    //       pin_metrics.max_cap = max_cap;
+    //       pin_metrics.max_slew = max_slew;
+    //       pin_metrics.rise_slew = rise_slew;
+    //       pin_metrics.fall_slew = fall_slew;
+    //       pin_metrics.slack = slack;
+    //       pin_metrics.rise_arrival_time = rise_arrival_time;
+    //       pin_metrics.fall_arrival_time = fall_arrival_time;
+
+    //       // Process the pin
+    //       collector.processPin(pin_metrics);
+
+
+          
+
+
+    //       // Update previous values for next iteration
+    //       prev_x = pin_loc.x();
+    //       prev_y = pin_loc.y();
+    //       prev_pin = pin;
+    //   }
+    //   path_count++;
+
+    //   // std::cout << "Debug Point 4" << std::endl;
+
+    //   // Finalize the collection
+    //   collector.finalize();
+
+    // }
+
+    // std::chrono::steady_clock::time_point reg_path_data_extract_end = std::chrono::steady_clock::now();
+    // std::cout << "Time to extract data from each path between registers: "
+    //           << std::chrono::duration_cast<std::chrono::milliseconds>(
+    //                  reg_path_data_extract_end - reg_path_data_extract_begin)
+    //                  .count()
+    //           << " ms" << std::endl;
 
     // Start processing the collected data
 
