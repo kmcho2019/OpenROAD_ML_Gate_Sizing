@@ -415,7 +415,9 @@ class Resizer : public dbStaState
   void getEndpointAndCriticalPaths(const std::string& output_base_path,
                                               const std::string& tech_embedding_file_path,
                                               const std::string& label_size_file_path,
-                                              const std::string& model_weight_file_path);
+                                              const std::string& model_weight_file_path,
+                                              int input_group_count,
+                                              int input_endpoint_count);
   void resizewithML();
 
   ////////////////////////////////////////////////////////////////

@@ -688,6 +688,8 @@ sta::define_cmd_args "get_endpoints_and_critical_paths" {
     -tech_embedding_file_path tech_embedding_file_path
     -label_size_file_path label_size_file_path
     -model_weight_file_path model_weight_file_path
+    -input_group_count input_group_count
+    -input_endpoint_count input_endpoint_count
 }
 
 #proc get_endpoints_and_critical_paths {args} {
@@ -697,7 +699,7 @@ sta::define_cmd_args "get_endpoints_and_critical_paths" {
 # Error code 7777 is a placeholder
 proc get_endpoints_and_critical_paths { args } {
     sta::parse_key_args "get_endpoints_and_critical_paths" args \
-        keys {-output_base_path -tech_embedding_file_path -label_size_file_path -model_weight_file_path} \
+        keys {-output_base_path -tech_embedding_file_path -label_size_file_path -model_weight_file_path -input_group_count -input_endpoint_count} \
         flags {}
 
     # Check for required arguments
@@ -712,11 +714,21 @@ proc get_endpoints_and_critical_paths { args } {
         }
     }
 
+    # Set defaults for optional arguments if not provided
+    if { ![info exists keys(-input_group_count)] } {
+         set keys(-input_group_count) -1
+    }
+    if { ![info exists keys(-input_endpoint_count)] } {
+         set keys(-input_endpoint_count) -1
+    }
+
     rsz::get_endpoints_and_critical_paths_cmd \
         $keys(-output_base_path) \
         $keys(-tech_embedding_file_path) \
         $keys(-label_size_file_path) \
-        $keys(-model_weight_file_path)
+        $keys(-model_weight_file_path) \
+        [expr int($keys(-input_group_count))] \
+        [expr int($keys(-input_endpoint_count))]
 }
 
 namespace eval rsz {

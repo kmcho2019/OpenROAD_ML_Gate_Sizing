@@ -2867,13 +2867,17 @@ void Resizer::loadWeights(const std::string& weight_file_path)
 void Resizer::getEndpointAndCriticalPaths(const std::string& output_base_path,
                                               const std::string& tech_embedding_file_path,
                                               const std::string& label_size_file_path,
-                                              const std::string& model_weight_file_path)
+                                              const std::string& model_weight_file_path,
+                                              int input_group_count,
+                                              int input_endpoint_count)
 {
   resizePreamble();
   ml_sizer_->getEndpointAndCriticalPaths(output_base_path,
         tech_embedding_file_path,
         label_size_file_path,
-        model_weight_file_path);
+        model_weight_file_path,
+        input_group_count,
+        input_endpoint_count);
 }
 /*
 void Resizer::resizewithML()

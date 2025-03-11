@@ -60,7 +60,9 @@ void MLGateSizer::addToken(const std::vector<float>& pin_data,
 void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_path,
                                               const std::string& tech_embedding_file_path,
                                               const std::string& label_size_file_path,
-                                              const std::string& model_weight_file_path)
+                                              const std::string& model_weight_file_path,
+                                              int input_group_count,
+                                              int input_endpoint_count)
 {
   // Output file base directory
   //const std::string output_base_path = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/NV_NVDLA_partition_m";
@@ -101,6 +103,18 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
   // Number of paths to retrieve (group_count)
   int crit_path_group_count = 2 * endpoints->size();//1000 * endpoints->size(); // 2 times the number of endpoints
+
+  // Check if input_group_count and input_endpoint_count are provided
+  // If provided, use them to override the default values
+  if (input_group_count == -1) {
+    crit_path_group_count = input_group_count;
+  }
+  if (input_endpoint_count == -1) {
+    crit_path_endpoint_count = input_endpoint_count;
+  }
+  // Print/log the number of paths to retrieve
+  std::cout << "Number of paths to retrieve: " << crit_path_group_count << std::endl;
+  std::cout << "Number of paths for each endpoint: " << crit_path_endpoint_count << std::endl;
 
   // Try to measure time to retrieve critical paths
   std::chrono::steady_clock::time_point crit_path_extract_begin = std::chrono::steady_clock::now();

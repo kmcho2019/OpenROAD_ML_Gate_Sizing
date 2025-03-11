@@ -810,7 +810,9 @@ void
 get_endpoints_and_critical_paths_cmd(const char* output_base_path,
                                      const char* tech_embedding_file_path,
                                      const char* label_size_file_path,
-                                     const char* model_weight_file_path)
+                                     const char* model_weight_file_path,
+                                     int input_group_count,
+                                     int input_endpoint_count)
 {
   ensureLinked();
   Resizer *resizer = getResizer();
@@ -827,7 +829,9 @@ get_endpoints_and_critical_paths_cmd(const char* output_base_path,
         output_base_path_str,
         tech_embedding_str,
         label_size_str,
-        model_weight_str
+        model_weight_str,
+        input_group_count,
+        input_endpoint_count
     );
   }
 
