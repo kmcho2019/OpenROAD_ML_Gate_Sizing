@@ -106,10 +106,10 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
   // Check if input_group_count and input_endpoint_count are provided
   // If provided, use them to override the default values
-  if (input_group_count == -1) {
+  if (input_group_count != -1) {
     crit_path_group_count = input_group_count;
   }
-  if (input_endpoint_count == -1) {
+  if (input_endpoint_count != -1) {
     crit_path_endpoint_count = input_endpoint_count;
   }
   // Print/log the number of paths to retrieve
