@@ -165,6 +165,8 @@ public:
 		}
 		
 		const SequenceCollection& getSequences() const { return sequences; }
+
+    size_t getSequenceCount() const { return sequences.size(); }
 		
 private:
 		PinSequence current_sequence;
@@ -471,6 +473,17 @@ class MLGateSizer : public sta::dbStaState
   dbNetwork* db_network_ = nullptr;
   Resizer* resizer_;
 
+  // Track the highest used id for pins and cells
+  // This is used to assign unique ids to new pins and cells
+  // The counter is initialized to -1 to avoid conflicts with existing ids
+  // When new ids are needed, the counter is incremented and the new id is returned
+  // So new ids are always unique and start from 0
+  int pin_id_counter_ = -1;
+  int cell_id_counter_ = -1;
+
+  // Keep track of total number of paths extracted
+  size_t total_paths_extracted_ = 0;
+
   // ------------
   // Helper to fill an Eigen matrix from ParamData
   bool fillEigenMatrix(const ParamData& pd,
@@ -492,24 +505,31 @@ class MLGateSizer : public sta::dbStaState
   std::vector<std::vector<float>> pin_tokens_;
   std::vector<std::string> gate_types_;
 	
-	// Libcells and types Mapping
-	// Stores the libcells and their corresponding ids and types
-  	std::vector<std::string> ordered_libcells_;
-	std::unordered_map<std::string, int> libcell_to_id_;
-	std::unordered_map<std::string, int> libcell_to_type_id_;
-	std::unordered_map<int, std::vector<int>> libcell_type_id_to_libcell_ids_;
-	std::unordered_map<int, int> libcell_id_to_libcell_type_id_;
+  // Libcells and types Mapping
+  // Stores the libcells and their corresponding ids and types
+  std::vector<std::string> ordered_libcells_;
+  std::unordered_map<std::string, int> libcell_to_id_;
+  std::unordered_map<std::string, int> libcell_to_type_id_;
+  std::unordered_map<int, std::vector<int>> libcell_type_id_to_libcell_ids_;
+  std::unordered_map<int, int> libcell_id_to_libcell_type_id_;
 
   std::unordered_map<int, std::vector<float>> libcell_id_to_embedding_;
-	std::unordered_map<int, std::vector<float>> libcell_type_id_to_embedding_;
+  std::unordered_map<int, std::vector<float>> libcell_type_id_to_embedding_;
   size_t embedding_size_ = 0;
 
-	// Case-sensitive alphabetical sort that matches Python's default
-	struct LibcellComparator {
-		bool operator()(const std::string& a, const std::string& b) const {
-			return a < b; // Simple lexicographical comparison
-		}
-	};
+  // Mappings for pin and cell names to ids
+  std::unordered_map<std::string, int> pin_name_to_id_;
+  std::unordered_map<std::string, int> cell_name_to_id_;
+  std::unordered_map<int, std::string> pin_id_to_name_;
+  std::unordered_map<int, std::string> cell_id_to_name_;
+
+
+  // Case-sensitive alphabetical sort that matches Python's default
+  struct LibcellComparator {
+    bool operator()(const std::string& a, const std::string& b) const {
+      return a < b; // Simple lexicographical comparison
+    }
+  };
 
   // Helper to write binary files
   template <typename T>
@@ -522,6 +542,29 @@ class MLGateSizer : public sta::dbStaState
       }
   }
   // Eigen::MatrixXf transformer_weights_;
+
+  // Path Extraction functions
+  // 1. Extract critical paths from the STA graph
+  sta::PathEndSeq extractCriticalPaths(int path_group_count, int path_per_endpoint);
+  // 2. Extract register-to-register paths from the STA graph
+  sta::PathEndSeq extractRegToRegPaths(int path_group_count, int path_per_endpoint);
+
+  // Path Data Extraction functions
+  // 1. For each path, expand, it iterate each over each pin and fill the PinMetrics struct
+  PinSequenceCollector collectPinMetrics(sta::PathEndSeq& path_ends);
+  // 2. Sub-helper that returns the metrics for a single pin in the path
+  PinMetrics getPinMetrics(sta::PathExpanded& expanded_path, 
+							size_t idx, 
+							sta::Pin* prev_pin, 
+							float prev_x, 
+							float prev_y, 
+							const sta::DcalcAnalysisPt* dcalc_ap,
+              std::set<odb::dbNet*> clk_nets,
+              sta::LibertyLibrary* lib,
+              sta::Corner* corner
+            );
+
+
 
   // The final data structure that holds all the transformer's weight matrices
   TransformerWeights transformer_weights_;
