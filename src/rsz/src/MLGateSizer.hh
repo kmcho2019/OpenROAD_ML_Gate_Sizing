@@ -214,7 +214,7 @@ public:
 		build() {
 				size_t N = sequences_.size();
 				size_t L = max_seq_len_;
-				size_t D = num_numerical_features_ + embedding_dim_;
+				size_t D = num_numerical_features_; //num_numerical_features_ + embedding_dim_;
 				
 				// Initialize arrays with padding
 				std::vector<std::vector<std::vector<float>>> data_array(
@@ -234,13 +234,7 @@ public:
 								std::vector<float> features = getNumericalFeatures(metrics);
 								std::copy(features.begin(), features.end(), data_array[i][j].begin());
 								
-								// Add embedding
-								int libcell_id = libcell_to_id_.at(metrics.cell_type);
-								int libcell_type_id = libcell_to_type_id_.at(metrics.cell_type);
-								//const auto& embedding = libcell_embeddings_.at(libcell_type_id);
-								const auto& embedding = libcell_embeddings_.at(libcell_id);
-								std::copy(embedding.begin(), embedding.end(), 
-												data_array[i][j].begin() + num_numerical_features_);
+								// Remove embeddings as storing them is inefficient as opposed to looking them up
 								
 								// Fill lookup arrays
 								pin_ids[i][j] = pin_name_to_id_.at(metrics.pin_name);
@@ -390,23 +384,25 @@ class MLGateSizer : public sta::dbStaState
 
   // Eigen-based version, more efficient (non input weights use random weights)
   std::vector<std::vector<std::vector<float>>> runTransformerEigen(
-      const std::vector<std::vector<std::vector<float>>>& data_array_1,
-			const std::vector<std::vector<std::vector<float>>>& data_array_2,
-      int num_heads,
-      size_t N,
-      size_t L,
-      size_t D_in,
-			size_t D_out,
-			size_t D_emb,
-      size_t D_model,
-      size_t FF_hidden_dim,
-      int num_encoder_layers,
-			int num_encoder_layers_2);
+    const std::vector<std::vector<std::vector<float>>>& encoder_1_numeric_data,
+    const std::vector<std::vector<int>>& encoder_1_libcell_ids,
+    const std::vector<std::vector<int>>& encoder_2_libcell_type_ids,
+    int num_heads,
+    size_t N,
+    size_t L,
+    size_t D_in,
+    size_t D_out,
+    size_t D_emb,
+    size_t D_model,
+    size_t FF_hidden_dim,
+    int num_encoder_layers,
+    int num_encoder_layers_2);
 
-  // Eigen-based version, more efficient
+  // Eigen-based version, more efficient (uses loaded weights)
   std::vector<std::vector<std::vector<float>>> runTransformerEigen(
-      const std::vector<std::vector<std::vector<float>>>& data_array_1,
-			const std::vector<std::vector<std::vector<float>>>& data_array_2,
+      const std::vector<std::vector<std::vector<float>>>& encoder_1_numeric_data,
+      const std::vector<std::vector<int>>& encoder_1_libcell_ids,
+			const std::vector<std::vector<int>>& encoder_2_libcell_type_ids,
       int num_heads,
       size_t N,
       size_t L,

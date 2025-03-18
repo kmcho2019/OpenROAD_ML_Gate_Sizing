@@ -2089,7 +2089,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
         std::cout << "Running inference" << std::endl;
 
         auto start_ = std::chrono::steady_clock::now();
-        loaded_eigen_output = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, D_out, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2, transformer_weights_);
+        loaded_eigen_output = runTransformerEigen(data_array, libcell_ids, encoder_2_input_libcell_type_ids, num_heads, N, L, D_in, D_out, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2, transformer_weights_);
         auto end_ = std::chrono::steady_clock::now();
   
         auto loaded_eigen_us = std::chrono::duration_cast<std::chrono::microseconds>(end_ - start_).count();
@@ -4489,18 +4489,19 @@ static void eigenLayerNorm(Eigen::MatrixXf& seq, float eps=1e-5f)
 // Each class corresponding to the libcell.
 // --------------------------------------------------------------------
 std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  // Random weights
-    const std::vector<std::vector<std::vector<float>>>& data_array_1, // shape [N x L   x D_in]
-    const std::vector<std::vector<std::vector<float>>>& data_array_2, // shape [N x L/2 x D_emb]
-    int num_heads,
-    size_t N,
-    size_t L,
-    size_t D_in,
-    size_t D_out,
-    size_t D_emb,
-    size_t D_model,
-    size_t FF_hidden_dim,
-    int num_encoder_layers,
-    int num_encoder_layers_2)
+  const std::vector<std::vector<std::vector<float>>>& encoder_1_numeric_data, // shape [N x L   x D_in]
+  const std::vector<std::vector<int>>& encoder_1_libcell_ids, // shape [N x L]
+  const std::vector<std::vector<int>>& encoder_2_libcell_type_ids, // shape [N x L/2]
+  int num_heads,
+  size_t N,
+  size_t L,
+  size_t D_in,  // = 18 (numeric data extracted from pin, could be changed)
+  size_t D_out,
+  size_t D_emb, // = 768 (libcell embedding dimension, could be changed currently uses deberta-v3-base)
+  size_t D_model,
+  size_t FF_hidden_dim,
+  int num_encoder_layers,
+  int num_encoder_layers_2)
 {
   //size_t N = data_array_1.size();
   if (N == 0) return {};
@@ -4530,7 +4531,6 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
   static std::mt19937 rng(999);
   std::uniform_real_distribution<float> dist(-0.05f, 0.05f);
 
-  // W_in: [D_in x D_model]
   auto randomMatrix = [&](size_t r, size_t c){
     Eigen::MatrixXf m(r,c);
     for(int i=0; i<r; i++){
@@ -4549,8 +4549,12 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
   };
 
   // If you want to map back to D_in:
+  // W_in: [(D_in + D_emb) x D_model]
+  // D_in: numeric data, D_emb: libcell embedding
+  // W_in2: [D_emb x D_model]
+  // D_emb: libcell type embedding
   // W_out: [D_model x D_out]
-  auto W_in  = randomMatrix(D_in, D_model);
+  auto W_in  = randomMatrix(D_in + D_emb, D_model);
   auto W_in2 = randomMatrix(D_emb, D_model);
   auto W_out = randomMatrix(D_model, D_out);
 
@@ -4579,19 +4583,41 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
   
   // For each sequence in the batch:
   for (size_t n = 0; n < N; n++) {
-    // current seq: [L x D_in]
-    Eigen::MatrixXf seq(L, D_in);
+    // 1) Build the combined input seq of shape [L x (D_in + D_emb)]
+    // Combine the numeric data and libcell embeddings
+    Eigen::MatrixXf seq(L, D_in + D_emb);
+
     for (size_t l = 0; l < L; l++) {
-      for (size_t d = 0; d < D_in; d++) {
-        seq(l, d) = data_array_1[n][l][d];
+      
+      // Get the libcell id for this position
+      // If the libcell id is -1, it's a padding token
+      int libcell_id = encoder_1_libcell_ids[n][l];
+
+      if (libcell_id == -1) {
+        // This is a padding token, so we'll just fill with zeros
+        for (size_t d = 0; d < (D_in + D_embd); d++) {
+          seq(l, d) = 0.0f;
+        }
+      }
+      else {
+        // (a) Copy the numeric data features (D_in)
+        for (size_t d = 0; d < D_in; d++) {
+          seq(l, d) = encoder_1_numeric_data[n][l][d];
+        }
+        // (b) Lookup the the libcell embeddings (D_emb)
+        const std::vector<float>& libcell_embedding = libcell_id_to_embedding_[libcell_id];
+        // Append the libcell embedding to the numeric data
+        for (size_t d = 0; d < D_emb; d++) {
+          seq(l, D_in + d) = libcell_embedding[d];
+        }
       }
     }
 
     // First encoder: self-attention
-    // 1) Project seq => [L x D_model]
+    // 2) Project seq => [L x D_model]
     Eigen::MatrixXf seq_proj = seq * W_in;
 
-    // 2) Run through encoder blocks
+    // 3) Run through encoder blocks
     Eigen::MatrixXf x = seq_proj; // shape [L x D_model]
     for (int layer = 0; layer < num_encoder_layers; layer++) {
       // (a) Multi-head self-attention
@@ -4610,16 +4636,33 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     }
 
     // Second encoder: cross-attention
-    // 1) Project seq => [L/2 x D_model]
+    // 4) Project seq => [L/2 x D_model]
     Eigen::MatrixXf seq_proj2(L2, D_emb);
     for (size_t l = 0; l < L2; l++) {
-      for (size_t d = 0; d < D_emb; d++) {
-        seq_proj2(l, d) = data_array_2[n][l][d];
+      // Get the libcell type id for this position
+      // If the libcell type id is -1, it's a padding token
+      int libcell_type_id = encoder_2_libcell_type_ids[n][l];
+
+      if (libcell_type_id == -1) {
+        // This is a pad token => fill with zeros
+        for (size_t d = 0; d < D_emb; d++) {
+          seq_proj2(l, d) = 0.0f;
+        }
+      }
+      else {
+        // Lookup the libcell type embedding
+        const std::vector<float>& libcell_type_embedding = libcell_type_id_to_embedding_[libcell_type_id];
+        // Copy the libcell type embedding
+        for (size_t d = 0; d < D_emb; d++) {
+          seq_proj2(l, d) = libcell_type_embedding[d];
+        }
       }
     }
 
     // [L/2 x D_emb] x [D_emb x D_model] => [L/2 x D_model]
+    // 5) Project seq2 => [L/2 x D_model]
     Eigen::MatrixXf x2 = seq_proj2 * W_in2;
+    // 6) Run through 2nd encoder blocks
     for (int layer_2 = 0; layer_2 < num_encoder_layers_2; layer_2++) {
       // (a) Multi-head cross-attention
       auto attn_out2 = eigenCrossAttention(x2, x, num_heads, D_model, L2, L, Wq, Wk, Wv, Wo);
@@ -4640,8 +4683,10 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
 
     // x is now [L/2 x D_model]. Project back to [L/2 x D_out]
+    // 7) Project x2 => [L/2 x D_out]
     Eigen::MatrixXf final_out = x2 * W_out;
 
+    // 8) Apply softmax to each row like a classification head
     // Conduct softmax over D_out dimension to get class probabilities
     for (size_t l = 0; l < L2; l++) {
       float max_val = final_out.row(l).maxCoeff();
@@ -4650,6 +4695,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
       final_out.row(l) /= sum_;
     }
 
+    // 9) Store final_out in output[n]
     // Store final_out in output[n]
     for (size_t l = 0; l < L2; l++) {
       for (size_t d = 0; d < D_out; d++) {
@@ -4665,20 +4711,28 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
 
 std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  // Uses given weights
-    const std::vector<std::vector<std::vector<float>>>& data_array_1, // shape [N x L   x D_in]
-    const std::vector<std::vector<std::vector<float>>>& data_array_2, // shape [N x L/2 x D_emb]
+    const std::vector<std::vector<std::vector<float>>>& encoder_1_numeric_data, // shape [N x L   x D_in]
+    const std::vector<std::vector<int>>& encoder_1_libcell_ids, // shape [N x L]
+    const std::vector<std::vector<int>>& encoder_2_libcell_type_ids, // shape [N x L/2]
     int num_heads,
     size_t N,
     size_t L,
-    size_t D_in,
+    size_t D_in,  // = 18 (numeric data extracted from pin, could be changed)
     size_t D_out,
-    size_t D_emb,
+    size_t D_emb, // = 768 (libcell embedding dimension, could be changed currently uses deberta-v3-base)
     size_t D_model,
     size_t FF_hidden_dim,
     int num_encoder_layers,
     int num_encoder_layers_2,
     const TransformerWeights& weights)
 {
+
+  // N: batch size
+  // L: sequence length
+  // D_in: numeric features only (e.g., 18)
+  // D_emb: size of each embedding (e.g., 768)
+  // We want a final input dimension = D_in + D_emb
+
   //size_t N = data_array_1.size();
   if (N == 0) return {};
 
@@ -4710,19 +4764,42 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
   //std::cout << "Debug 2" << std::endl;
   // For each sequence in the batch:
   for (size_t n = 0; n < N; n++) {
-    // current seq: [L x D_in]
-    Eigen::MatrixXf seq(L, D_in);
+
+    // 1) Build the combined input seq of shape [L x (D_in + D_emb)]
+    // Combine the numeric data and libcell embeddings
+    Eigen::MatrixXf seq(L, D_in + D_emb);
+
     for (size_t l = 0; l < L; l++) {
-      for (size_t d = 0; d < D_in; d++) {
-        seq(l, d) = data_array_1[n][l][d];
+      
+      // Get the libcell id for this position
+      // If the libcell id is -1, it's a padding token
+      int libcell_id = encoder_1_libcell_ids[n][l];
+
+      if (libcell_id == -1) {
+        // This is a padding token, so we'll just fill with zeros
+        for (size_t d = 0; d < (D_in + D_embd); d++) {
+          seq(l, d) = 0.0f;
+        }
+      }
+      else {
+        // (a) Copy the numeric data features (D_in)
+        for (size_t d = 0; d < D_in; d++) {
+          seq(l, d) = encoder_1_numeric_data[n][l][d];
+        }
+        // (b) Lookup the the libcell embeddings (D_emb)
+        const std::vector<float>& libcell_embedding = libcell_id_to_embedding_[libcell_id];
+        // Append the libcell embedding to the numeric data
+        for (size_t d = 0; d < D_emb; d++) {
+          seq(l, D_in + d) = libcell_embedding[d];
+        }
       }
     }
     //std::cout << "Debug 3" << std::endl;
     // First encoder: self-attention
-    // 1) Project seq => [L x D_model]
+    // 2) Project seq => [L x D_model]
     Eigen::MatrixXf seq_proj = seq * weights.W_in1;
     //std::cout << "Debug 4" << std::endl;
-    // 2) Run through encoder blocks
+    // 3) Run through encoder blocks
     Eigen::MatrixXf x = seq_proj; // shape [L x D_model]
     for (int layer = 0; layer < num_encoder_layers; layer++) {
       // (a) Multi-head self-attention
@@ -4741,16 +4818,33 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     }
     //std::cout << "Debug 5" << std::endl;
     // Second encoder: cross-attention
-    // 1) Project seq => [L/2 x D_model]
+    // 4) Project seq => [L/2 x D_model]
     Eigen::MatrixXf seq_proj2(L2, D_emb);
     for (size_t l = 0; l < L2; l++) {
-      for (size_t d = 0; d < D_emb; d++) {
-        seq_proj2(l, d) = data_array_2[n][l][d];
+      // Get the libcell type id for this position
+      // If the libcell type id is -1, it's a padding token
+      int libcell_type_id = encoder_2_libcell_type_ids[n][l];
+
+      if (libcell_type_id == -1) {
+        // This is a pad token => fill with zeros
+        for (size_t d = 0; d < D_emb; d++) {
+          seq_proj2(l, d) = 0.0f;
+        }
+      }
+      else {
+        // Lookup the libcell type embedding
+        const std::vector<float>& libcell_type_embedding = libcell_type_id_to_embedding_[libcell_type_id];
+        // Copy the libcell type embedding
+        for (size_t d = 0; d < D_emb; d++) {
+          seq_proj2(l, d) = libcell_type_embedding[d];
+        }
       }
     }
     //std::cout << "Debug 6" << std::endl;
     // [L/2 x D_emb] x [D_emb x D_model] => [L/2 x D_model]
+    // 5) Project seq2 => [L/2 x D_model]
     Eigen::MatrixXf x2 = seq_proj2 * weights.W_in2;
+    // 6) Run through 2nd encoder blocks
     for (int layer_2 = 0; layer_2 < num_encoder_layers_2; layer_2++) {
       // (a) Multi-head cross-attention
       auto attn_out2 = eigenCrossAttention(x2, x, num_heads, D_model, L2, L, weights.encoder2_0_Wq_2[layer_2], weights.encoder2_0_Wk_2[layer_2], weights.encoder2_0_Wv_2[layer_2], weights.encoder2_0_Wo_2[layer_2]);
@@ -4771,8 +4865,10 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
     //std::cout << "Debug 7" << std::endl;
     // x is now [L/2 x D_model]. Project back to [L/2 x D_out] or [L/2 x num_classes]
+    // 7) Project x2 => [L/2 x D_out]
     Eigen::MatrixXf final_out = x2 * weights.W_out;
 
+    // 8) Apply softmax to each row like a classification head
     // Conduct softmax over D_out dimension to get class probabilities
     for (size_t l = 0; l < L2; l++) {
       float max_val = final_out.row(l).maxCoeff();
@@ -4781,6 +4877,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
       final_out.row(l) /= sum_;
     }
 
+    // 9) Store final_out in output[n]
     // Store final_out in output[n]
     for (size_t l = 0; l < L2; l++) {
       for (size_t d = 0; d < D_out; d++) {
