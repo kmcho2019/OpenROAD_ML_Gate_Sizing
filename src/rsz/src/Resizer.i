@@ -812,7 +812,9 @@ get_endpoints_and_critical_paths_cmd(const char* output_base_path,
                                      const char* label_size_file_path,
                                      const char* model_weight_file_path,
                                      int input_group_count,
-                                     int input_endpoint_count)
+                                     int input_endpoint_count,
+                                     bool skip_inference,
+                                     bool size_with_label)
 {
   ensureLinked();
   Resizer *resizer = getResizer();
@@ -831,7 +833,9 @@ get_endpoints_and_critical_paths_cmd(const char* output_base_path,
         label_size_str,
         model_weight_str,
         input_group_count,
-        input_endpoint_count
+        input_endpoint_count,
+        skip_inference,
+        size_with_label
     );
   }
 

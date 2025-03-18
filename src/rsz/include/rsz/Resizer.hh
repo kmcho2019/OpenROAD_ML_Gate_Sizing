@@ -417,7 +417,9 @@ class Resizer : public dbStaState
                                               const std::string& label_size_file_path,
                                               const std::string& model_weight_file_path,
                                               int input_group_count,
-                                              int input_endpoint_count);
+                                              int input_endpoint_count,
+                                              bool skip_inference,
+                                              bool size_with_label);
   void resizewithML();
 
   ////////////////////////////////////////////////////////////////

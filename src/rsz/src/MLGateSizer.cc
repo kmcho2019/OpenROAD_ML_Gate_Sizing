@@ -482,7 +482,9 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
                                               const std::string& label_size_file_path,
                                               const std::string& model_weight_file_path,
                                               int input_group_count,
-                                              int input_endpoint_count)
+                                              int input_endpoint_count,
+                                              bool skip_inference,
+                                              bool size_with_label)
 {
   // Output file base directory
   //const std::string output_base_path = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/NV_NVDLA_partition_m";
@@ -1975,7 +1977,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
       // Debugging flag to skip inference
       // Set to true to skip inference, all predicted indices will be 0
-      bool skip_inference = true; 
+      //bool skip_inference = true; 
 
       // Check if transformer_weights_ are loaded properly and actually contain the weights
       // Iterate through the weights and print the shape of each weight
@@ -2168,13 +2170,12 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       }
 
       // Debugging flag, use label .size file to resize the cells in the design
-      bool use_label_to_resize = true;
       std::map<int, std::string> updated_cells; 
       std::map<int, std::string> skipped_cells;
       size_t num_resized_cells = 0;
       size_t failed_resizing = 0;
       
-      if (!use_label_to_resize) {
+      if (!size_with_label) {
         std::cout << "Use loaded model to resize the cells in the design" << std::endl;
         // Apply the predicted libcell IDs to the design using resizer_->replaceCell()
         // Reference RepairSetup.cc/upsizeDrvr()

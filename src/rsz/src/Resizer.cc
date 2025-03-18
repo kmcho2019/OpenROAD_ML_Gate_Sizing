@@ -2869,7 +2869,9 @@ void Resizer::getEndpointAndCriticalPaths(const std::string& output_base_path,
                                               const std::string& label_size_file_path,
                                               const std::string& model_weight_file_path,
                                               int input_group_count,
-                                              int input_endpoint_count)
+                                              int input_endpoint_count,
+                                              bool skip_inference,
+                                              bool size_with_label)
 {
   resizePreamble();
   ml_sizer_->getEndpointAndCriticalPaths(output_base_path,
@@ -2877,7 +2879,9 @@ void Resizer::getEndpointAndCriticalPaths(const std::string& output_base_path,
         label_size_file_path,
         model_weight_file_path,
         input_group_count,
-        input_endpoint_count);
+        input_endpoint_count,
+        skip_inference,
+        size_with_label);
 }
 /*
 void Resizer::resizewithML()

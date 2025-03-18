@@ -684,12 +684,14 @@ sta::proc_redirect report_long_wires {
 
 #sta::define_cmd_args "get_endpoints_and_critical_paths" {}
 sta::define_cmd_args "get_endpoints_and_critical_paths" {
-    -output_base_path output_base_path
-    -tech_embedding_file_path tech_embedding_file_path
-    -label_size_file_path label_size_file_path
-    -model_weight_file_path model_weight_file_path
-    -input_group_count input_group_count
-    -input_endpoint_count input_endpoint_count
+  [-output_base_path output_base_path] \
+  [-tech_embedding_file_path tech_embedding_file_path] \
+  [-label_size_file_path label_size_file_path] \
+  [-model_weight_file_path model_weight_file_path] \
+  [-input_group_count input_group_count] \
+  [-input_endpoint_count input_endpoint_count] \
+  [-skip_inference] \
+  [-size_with_label]
 }
 
 #proc get_endpoints_and_critical_paths {args} {
@@ -700,7 +702,7 @@ sta::define_cmd_args "get_endpoints_and_critical_paths" {
 proc get_endpoints_and_critical_paths { args } {
     sta::parse_key_args "get_endpoints_and_critical_paths" args \
         keys {-output_base_path -tech_embedding_file_path -label_size_file_path -model_weight_file_path -input_group_count -input_endpoint_count} \
-        flags {}
+        flags {-skip_inference -size_with_label}
 
     # Check for required arguments
     foreach required_key {
@@ -722,13 +724,18 @@ proc get_endpoints_and_critical_paths { args } {
          set keys(-input_endpoint_count) -1
     }
 
+    set skip_inference [info exists flags(-skip_inference)]
+    set size_with_label [info exists flags(-size_with_label)]
+
     rsz::get_endpoints_and_critical_paths_cmd \
         $keys(-output_base_path) \
         $keys(-tech_embedding_file_path) \
         $keys(-label_size_file_path) \
         $keys(-model_weight_file_path) \
         [expr int($keys(-input_group_count))] \
-        [expr int($keys(-input_endpoint_count))]
+        [expr int($keys(-input_endpoint_count))] \
+        $skip_inference \
+        $size_with_label
 }
 
 namespace eval rsz {
