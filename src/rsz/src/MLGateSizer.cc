@@ -1976,58 +1976,6 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     std::cout << "1st Encoder Input shape: (" << data_array.size() << ", " << data_array[0].size() << ", " << data_array[0][0].size() << ")" << std::endl;
     std::cout << "2nd Encoder Input shape: (" << encoder_2_input.size() << ", " << encoder_2_input[0].size() << ", " << encoder_2_input[0][0].size() << ")" << std::endl;
 
-    bool compare_naive_eigen = false;
-
-    if (compare_naive_eigen) {
-      // 3-1) Actually store the outputs to compare correctness
-      auto start = std::chrono::steady_clock::now();
-      auto out_naive  = runTransformer(data_array, encoder_2_input, num_heads, N, L, D_in, D_out, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);
-      auto end = std::chrono::steady_clock::now();
-      auto naive_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      start = std::chrono::steady_clock::now();
-      auto out_eigen  = runTransformerEigen(data_array, encoder_2_input, num_heads, N, L, D_in, D_out, embedding_size_, D_model, FF_hidden_dim, num_encoder_layers, num_encoder_layers_2);
-      end = std::chrono::steady_clock::now();
-      auto eigen_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      bool ok = compareOutputs(out_naive, out_eigen, 1e-3f);
-
-      std::cout << "Output shape: (" << out_naive.size() << ", " << out_naive[0].size() << ", " << out_naive[0][0].size() << ")" << std::endl;
-
-      std::cout << "NAIVE  time: " << naive_us << " us   => "
-                << (1e6 * double(total_tokens) / double(naive_us))
-                << " tokens/sec\n";
-      std::cout << "EIGEN  time: " << eigen_us << " us   => "
-                << (1e6 * double(total_tokens) / double(eigen_us))
-                << " tokens/sec\n";
-      std::cout << "Outputs match? " << (ok ? "YES" : "NO") << std::endl;
-
-      // If the outputs don't match, print the output first 5 tokens of the first 2 sequences or before the data ends
-      // Print both NAIVE and EIGEN outputs for easy comparison and debugging
-      if (!ok) {
-        std::cout << "NAIVE:" << std::endl;
-        for (size_t o = 0; o < ((2 > out_naive.size()) ? out_naive.size() : 2); o++) {
-          std::cout << "Sequence " << o << ": " << std::endl;
-          for (size_t i = 0; i < ((5 > out_naive[o].size()) ? out_naive[o].size() : 5); i++) {
-            std::cout << "Token " << i << ": ";
-            for (size_t j = 0; j < out_naive[0][0].size(); j++) {
-              std::cout << out_naive[o][i][j] << " ";
-            }
-            std::cout << std::endl;
-          }
-        }
-        std::cout << "EIGEN:" << std::endl;
-        for (size_t o = 0; o < ((2 > out_eigen.size()) ? out_eigen.size() : 2); o++) {
-          std::cout << "Sequence " << o << ": " << std::endl;
-          for (size_t i = 0; i < ((5 > out_eigen[o].size()) ? out_eigen[o].size() : 5); i++) {
-            std::cout << "Token " << i << ": ";
-            for (size_t j = 0; j < out_eigen[0][0].size(); j++) {
-              std::cout << out_eigen[o][i][j] << " ";
-            }
-            std::cout << std::endl;
-          }
-        }
-      }
-    }
-
 
     // Test using loaded model if transformer_weights_ is not empty
     if (transformer_weights_.loaded) {
