@@ -443,7 +443,8 @@ class MLGateSizer : public sta::dbStaState
   // Binary file handling
   void writeBinaryFile3DFloat(const std::string& filename, const std::vector<std::vector<std::vector<float>>>& data);
   void writeBinaryFile2DInt(const std::string& filename, const std::vector<std::vector<int>>& data);
-  void exportTypeEmbeddings(const std::string& filename);
+  void exportTypeEmbeddings(const std::string& filename); // Export libcell type embeddings
+  void exportLibcellEmbeddings(const std::string& filename);  // Export libcell embeddings
   std::vector<std::vector<std::vector<float>>> readBinaryFile(const std::string& filename);
 
 	// Read .size file to generate labels

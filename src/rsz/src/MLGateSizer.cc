@@ -836,7 +836,9 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       //const std::string type_embedding_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/ASAP7_libcell_type_embeddings.bin";
       //const std::string weight_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/transformer_params.bin";
       std::filesystem::path type_embedding_export_path = std::filesystem::path(output_base_path) / "ASAP7_libcell_type_embeddings.bin";
+      std::filesystem::path libcell_embedding_export_path = std::filesystem::path(output_base_path) / "ASAP7_libcell_embeddings.bin";
       exportTypeEmbeddings(type_embedding_export_path.string());
+      exportLibcellEmbeddings(libcell_embedding_export_path.string());
       loadWeights(model_weight_file_path); // Load the transformer weights
     }
     else if (libcell_to_id_.size() == 135) {  // Nangate45
@@ -845,7 +847,9 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       updateLibcellTypeEmbeddings();
       //const std::string type_embedding_filename = "/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/nangate45_libcell_type_embeddings.bin";
       std::filesystem::path type_embedding_export_path = std::filesystem::path(output_base_path) / "nangate45_libcell_type_embeddings.bin";
+      std::filesystem::path libcell_embedding_export_path = std::filesystem::path(output_base_path) / "nangate45_libcell_embeddings.bin";
       exportTypeEmbeddings(type_embedding_export_path.string());
+      exportLibcellEmbeddings(libcell_embedding_export_path.string());
       const std::string weight_filename = "";
       //loadWeights(model_weight_file_path); // Load the transformer weights
       std::cout << "Unsupported, unable to load model weights." << std::endl;
@@ -4871,6 +4875,63 @@ bool MLGateSizer::compareOutputs(
   std::cout << "Average diff: " << total_diff / (A.size() * A[0].size() * A[0][0].size()) << std::endl;
   return true;
 }
+
+void MLGateSizer::exportLibcellEmbeddings(const std::string& filename)
+{
+  const auto& embedding_map = libcell_id_to_embedding_; //libcell_type_id_to_embedding_;
+  
+  if (embedding_map.empty()) {
+    logger_->error(utl::RSZ, 1055, "Embedding map is empty (exportLibcellEmbeddings)");
+    return;
+  }
+
+  // Collect and sort keys
+  std::vector<int> keys;
+  for (const auto& pair : embedding_map) {
+    keys.push_back(pair.first);
+  }
+  std::sort(keys.begin(), keys.end());
+
+  // Check if keys are contiguous starting from 0
+  size_t N = keys.size();
+  for (size_t i = 0; i < N; ++i) {
+    if (keys[i] != static_cast<int>(i)) {
+      logger_->error(utl::RSZ, 1056, "libcell_type_ids are not contiguous starting from 0 (exportLibcellEmbeddings)");
+      return;
+    }
+  }
+
+  // Check all embeddings have the same dimension
+  size_t D = embedding_map.at(keys[0]).size();
+  for (const auto& key : keys) {
+  if (embedding_map.at(key).size() != D) {
+    logger_->error(utl::RSZ, 1057, "Inconsistent embedding dimensions (exportLibcellEmbeddings)");
+    return;
+  }
+  }
+
+  // Open file
+  std::ofstream out(filename, std::ios::binary);
+  if (!out) {
+    logger_->error(utl::RSZ, 1058, "Cannot open file {} for writing (exportLibcellEmbeddings)", filename);
+    return;
+  }
+
+  // Write dimensions (N and D)
+  out.write(reinterpret_cast<const char*>(&N), sizeof(size_t));
+  out.write(reinterpret_cast<const char*>(&D), sizeof(size_t));
+
+  // Write embeddings in order of sorted keys
+  for (const auto& key : keys) {
+    const auto& embedding = embedding_map.at(key);
+    out.write(reinterpret_cast<const char*>(embedding.data()), D * sizeof(float));
+  }
+
+  if (!out) {
+    logger_->error(utl::RSZ, 1059, "Error writing to file {} (exportLibcellEmbeddings)", filename);
+  }
+}
+
 
 
 }  // namespace rsz
