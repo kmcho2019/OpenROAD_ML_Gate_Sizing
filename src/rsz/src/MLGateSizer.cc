@@ -4595,7 +4595,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
       if (libcell_id == -1) {
         // This is a padding token, so we'll just fill with zeros
-        for (size_t d = 0; d < (D_in + D_embd); d++) {
+        for (size_t d = 0; d < (D_in + D_emb); d++) {
           seq(l, d) = 0.0f;
         }
       }
@@ -4777,7 +4777,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
       if (libcell_id == -1) {
         // This is a padding token, so we'll just fill with zeros
-        for (size_t d = 0; d < (D_in + D_embd); d++) {
+        for (size_t d = 0; d < (D_in + D_emb); d++) {
           seq(l, d) = 0.0f;
         }
       }

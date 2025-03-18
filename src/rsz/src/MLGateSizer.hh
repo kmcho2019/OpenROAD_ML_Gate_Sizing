@@ -239,8 +239,8 @@ public:
 								// Fill lookup arrays
 								pin_ids[i][j] = pin_name_to_id_.at(metrics.pin_name);
 								cell_ids[i][j] = cell_name_to_id_.at(metrics.cell_name);
-								libcell_ids[i][j] = libcell_id;
-								libcell_type_ids[i][j] = libcell_type_id;
+								libcell_ids[i][j] = libcell_to_id_.at(metrics.cell_type);
+								libcell_type_ids[i][j] = libcell_to_type_id_.at(metrics.cell_type);
 						}
 				}
 				
