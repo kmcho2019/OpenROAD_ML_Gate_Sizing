@@ -721,14 +721,9 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     std::cout << "No critical paths or paths between registers found " << std::endl;
   } else {
 
-    int total_paths_extracted_ = 0;
+
     // Declare tempoary vector to store the slack of each path
     std::vector<float> path_slacks;
-    // Get all clk_nets to check if the pins are connected to a clock net
-    std::set<dbNet*> clk_nets = sta_->findClkNets();
-    // Used during data retrieval but stays uniform for all paths
-    sta::LibertyLibrary* lib = network_->defaultLibertyLibrary();
-    sta::Corner* corner = sta_->cmdCorner();
 
     // Get Library Cell to index mapping
     std::vector<std::string> all_libcell_names_temp; // Initialize them as empty and build them up, used for generating ordered_libcells_
@@ -743,8 +738,6 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
     int libcell_id = 0;
     int libcell_type_id = 0;
-    int pin_id = 0;
-    int cell_id = 0;
     odb::dbDatabase* db = sta_->db();
     for (odb::dbLib* lib : db->getLibs()) {
       for (odb::dbMaster* master : lib->getMasters()) {
