@@ -2047,7 +2047,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
         auto loaded_eigen_us = std::chrono::duration_cast<std::chrono::microseconds>(end_ - start_).count();
   
         std::cout << "Loaded Eigen  time: " << loaded_eigen_us << " us   => "
-                  << (1e6 * double(total_tokens) / double(loaded_eigen_us))
+                  << (1e6 * double(total_tokens_encoder2) / double(loaded_eigen_us))
                   << " tokens/sec\n";
         // Calcualte total time for inference (use miliseconds)
         std::cout << "Time to run inference: " << 
