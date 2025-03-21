@@ -417,7 +417,7 @@ PinMetrics MLGateSizer::getPinMetrics(sta::PathExpanded& expand,
     // As only combinational cells should be resized
     cell_id_to_is_sequential_[cell_id] = is_sequential;
     cell_id_to_is_macro_[cell_id] = is_macro;
-    cell_id_to_is_supply_pin_[cell_id] = is_port;
+    cell_id_to_is_port_[cell_id] = is_port;
 
   }
 
@@ -2234,7 +2234,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
           // Before resizing check that cell_id isn't a sequential cell, macro cell, or a port
           // If so, skip the cell
-          if (cell_id_to_is_sequential_[cell_id] || cell_id_to_is_macro_[cell_id] || cell_id_to_is_port_[cell_id]) {
+          if (cell_id_to_is_port_[cell_id] || cell_id_to_is_macro_[cell_id] || cell_id_to_is_sequential_[cell_id]) {
             // Print that instance/cell name is a sequential cell, macro cell, or a port and resizing is skipped, also print the flag for each
             std::cout << "Cell " << cell_name << " is either a sequential cell(" << cell_id_to_is_sequential_[cell_id];
             std::cout << "), macro cell(" << cell_id_to_is_macro_[cell_id];
