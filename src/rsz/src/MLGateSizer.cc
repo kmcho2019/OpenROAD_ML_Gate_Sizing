@@ -1931,6 +1931,11 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     });
     */
 
+    // Also export all the extracted cells from the paths to a .txt file for debugging
+    // This is to check if there are problems with path + cell extraction
+    std::filesystem::path extracted_cells_path = output_base_path / "extracted_cells.txt";
+    exportInstanceCells(extracted_cells_path.string());
+
     // 3) Print the speed & correctness info
     // total tokens processed: N*L
     size_t total_tokens = data_array.size() * data_array[0].size();
@@ -4935,6 +4940,28 @@ void MLGateSizer::exportLibcellEmbeddings(const std::string& filename)
   if (!out) {
     logger_->error(utl::RSZ, 1059, "Error writing to file {} (exportLibcellEmbeddings)", filename);
   }
+}
+
+// Take a filename and export the cell_name strings in cell_name_to_id_
+// This has the format of a text file with one cell name per line
+// This is intended to be used for debugging purposes
+// Exporting all of the instance/cell names extracted from the paths
+void exportInstanceCells(const std::string& filename)
+{
+  std::ofstream out(filename);
+  if (!out) {
+    logger_->error(utl::RSZ, 1060, "Cannot open file {} for writing (exportInstanceCells)", filename);
+    return;
+  }
+
+  for (const auto& pair : cell_name_to_id_) {
+    out << pair.first << std::endl;
+  }
+
+  if (!out) {
+    logger_->error(utl::RSZ, 1061, "Error writing to file {} (exportInstanceCells)", filename);
+  }
+
 }
 
 

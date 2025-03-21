@@ -447,6 +447,9 @@ class MLGateSizer : public sta::dbStaState
   void exportLibcellEmbeddings(const std::string& filename);  // Export libcell embeddings
   std::vector<std::vector<std::vector<float>>> readBinaryFile(const std::string& filename);
 
+  // Export Extracted Instance Cells
+  void exportInstanceCells(const std::string& filename);  // Export instance cells into a text file
+
 	// Read .size file to generate labels
 	std::unordered_map<std::string, std::string> readSizeFile(const std::string& filename);
 
