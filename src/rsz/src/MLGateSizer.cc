@@ -1933,7 +1933,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
     // Also export all the extracted cells from the paths to a .txt file for debugging
     // This is to check if there are problems with path + cell extraction
-    std::filesystem::path extracted_cells_path = output_base_path / "extracted_cells.txt";
+    std::filesystem::path extracted_cells_path = std::filesystem::path(output_base_path) / "extracted_cells.txt";
     exportInstanceCells(extracted_cells_path.string());
 
     // 3) Print the speed & correctness info
@@ -4946,7 +4946,7 @@ void MLGateSizer::exportLibcellEmbeddings(const std::string& filename)
 // This has the format of a text file with one cell name per line
 // This is intended to be used for debugging purposes
 // Exporting all of the instance/cell names extracted from the paths
-void exportInstanceCells(const std::string& filename)
+void MLGateSizer::exportInstanceCells(const std::string& filename)
 {
   std::ofstream out(filename);
   if (!out) {
