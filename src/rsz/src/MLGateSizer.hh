@@ -526,6 +526,10 @@ class MLGateSizer : public sta::dbStaState
   std::unordered_map<int, std::string> cell_id_to_name_;
   std::unordered_map<int, int> cell_id_to_libcell_type_id_; // cell_id -> libcell_type_id
   std::unordered_map<int, int> cell_id_to_libcell_id_; // cell_id -> libcell_id
+  std::unordered_map<int, bool> cell_id_is_port_; // cell_id -> is_port
+  std::unordered_map<int, bool> cell_id_is_sequential_; // cell_id -> is_sequential
+  std::unordered_map<int, bool> cell_id_is_macro_; // cell_id -> is_macro
+
 
 
   // Case-sensitive alphabetical sort that matches Python's default

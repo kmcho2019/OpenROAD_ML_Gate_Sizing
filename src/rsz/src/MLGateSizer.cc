@@ -412,6 +412,12 @@ PinMetrics MLGateSizer::getPinMetrics(sta::PathExpanded& expand,
     cell_id_to_libcell_type_id_[cell_id] = libcell_to_type_id_[cell_type];
     // Fill in cell_id_to_libcell_id_ map
     cell_id_to_libcell_id_[cell_id] = libcell_to_id_[cell_type];
+    // Fill in is_sequential, is_macro, is_supply_pin mappings for cell_id
+    // Used to check if the instance/cell should be resized or not
+    // As only combinational cells should be resized
+    cell_id_to_is_sequential_[cell_id] = is_sequential;
+    cell_id_to_is_macro_[cell_id] = is_macro;
+    cell_id_to_is_supply_pin_[cell_id] = is_port;
 
   }
 
@@ -2206,20 +2212,34 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
 
         for (const auto& [cell_id, predicted_libcell_id] : cell_id_to_predicted_libcell_id) {
-          // Before resizing check that predicted_libcell_id is one of the allowed libcell types for the cell
-          // If not, skip the cell
-          // Use cell_id_to_libcell_type_id_ to get the libcell type id of the cell
-          if (libcell_id_to_libcell_type_id_[predicted_libcell_id] != cell_id_to_libcell_type_id_[cell_id]) {
+          // Get cell name from cell_id
+          const std::string& cell_name = cell_id_to_name_[cell_id];
+
+          if (cell_name.empty()) {
+            logger_->error(utl::RSZ, 1044, "Cannot find cell name for cell_id {} (applyPredictions)", 
+                          cell_id);
             failed_resizing++;
             continue;
           }
 
+          // Before resizing check that predicted_libcell_id is one of the allowed libcell types for the cell
+          // If not, skip the cell
+          // Use cell_id_to_libcell_type_id_ to get the libcell type id of the cell
+          if (libcell_id_to_libcell_type_id_[predicted_libcell_id] != cell_id_to_libcell_type_id_[cell_id]) {
+            // Print that instance/cell name is not of the same type as the predicted libcell ID
+            std::cout << "Cell " << cell_name << " is not of the same type as the predicted libcell ID, resizing skipped for this cell" << std::endl;
+            failed_resizing++;
+            continue;
+          }
 
-          // Get cell name from cell_id
-          const std::string& cell_name = cell_id_to_name_[cell_id];
-          if (cell_name.empty()) {
-            logger_->error(utl::RSZ, 1044, "Cannot find cell name for cell_id {} (applyPredictions)", 
-                          cell_id);
+          // Before resizing check that cell_id isn't a sequential cell, macro cell, or a port
+          // If so, skip the cell
+          if (cell_id_to_is_sequential_[cell_id] || cell_id_to_is_macro_[cell_id] || cell_id_to_is_port_[cell_id]) {
+            // Print that instance/cell name is a sequential cell, macro cell, or a port and resizing is skipped, also print the flag for each
+            std::cout << "Cell " << cell_name << " is either a sequential cell(" << cell_id_to_is_sequential_[cell_id];
+            std::cout << "), macro cell(" << cell_id_to_is_macro_[cell_id];
+            std::cout << "), or a port(" << cell_id_to_is_port_[cell_id];
+            std::cout << "), resizing skipped for this cell" << std::endl;
             failed_resizing++;
             continue;
           }
@@ -2286,6 +2306,28 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
           if (cell_name.empty()) {
             logger_->error(utl::RSZ, 1049, "Cannot find cell name for cell_id {} (applyPredictions)", 
                           cell_id);
+            failed_resizing++;
+            continue;
+          }
+
+          // Before resizing check that label_libcell_id is one of the allowed libcell types for the cell
+          // If not, skip the cell
+          // Use cell_id_to_libcell_type_id_ to get the libcell type id of the cell
+          if (libcell_id_to_libcell_type_id_[label_libcell_id] != cell_id_to_libcell_type_id_[cell_id]) {
+            // Print that instance/cell name is not of the same type as the predicted libcell ID
+            std::cout << "Cell " << cell_name << " is not of the same type as the predicted libcell ID, resizing skipped for this cell" << std::endl;
+            failed_resizing++;
+            continue;
+          }
+
+          // Before resizing check that cell_id isn't a sequential cell, macro cell, or a port
+          // If so, skip the cell
+          if (cell_id_to_is_sequential_[cell_id] || cell_id_to_is_macro_[cell_id] || cell_id_to_is_port_[cell_id]) {
+            // Print that instance/cell name is a sequential cell, macro cell, or a port and resizing is skipped, also print the flag for each
+            std::cout << "Cell " << cell_name << " is either a sequential cell(" << cell_id_to_is_sequential_[cell_id];
+            std::cout << "), macro cell(" << cell_id_to_is_macro_[cell_id];
+            std::cout << "), or a port(" << cell_id_to_is_port_[cell_id];
+            std::cout << "), resizing skipped for this cell" << std::endl;
             failed_resizing++;
             continue;
           }
