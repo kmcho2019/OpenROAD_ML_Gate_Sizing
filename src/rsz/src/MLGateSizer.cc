@@ -1881,6 +1881,11 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       }
     }
 
+    // Also export all the extracted cells from the paths to a .txt file for debugging
+    // This is to check if there are problems with path + cell extraction
+    std::filesystem::path extracted_cells_path = std::filesystem::path(output_base_path) / "extracted_cells.txt";
+    exportInstanceCells(extracted_cells_path.string());
+
     // Save the data_array, encoder_2_input, pin_ids, cell_ids, libcell_ids, libcell_type_ids to a binary file
     // The data_array is saved as a 3D array, pin_ids, cell_ids, libcell_ids, libcell_type_ids are saved as 2D arrays
     // The data_array is saved as a float32 array, pin_ids, cell_ids, libcell_ids, libcell_type_ids are saved as int32 arrays
@@ -1940,11 +1945,6 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       auto out_eigen = runTransformerEigen(data_array, num_heads, N, L, D_in, D_model, FF_hidden_dim, num_encoder_layers);
     });
     */
-
-    // Also export all the extracted cells from the paths to a .txt file for debugging
-    // This is to check if there are problems with path + cell extraction
-    std::filesystem::path extracted_cells_path = std::filesystem::path(output_base_path) / "extracted_cells.txt";
-    exportInstanceCells(extracted_cells_path.string());
 
     // 3) Print the speed & correctness info
     // total tokens processed: N*L
