@@ -1755,7 +1755,11 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     // Check if Cell ID and Libcell Type ID are consistent and if they occur in pairs (e.g. 4 4 0 0 1 1 2 2 3 3)
 
 
-
+    // Also export all the extracted cells from the paths to a .txt file for debugging
+    // This is to check if there are problems with path + cell extraction
+    std::filesystem::path extracted_cells_path = std::filesystem::path(output_base_path) / "extracted_cells.txt";
+    std::cout << "Exporting extracted cells to: " << extracted_cells_path.string() << std::endl;
+    exportInstanceCells(extracted_cells_path.string());
 
 
     
@@ -1824,19 +1828,6 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     }
 
 
-    std::vector<std::vector<std::vector<float>>> encoder_2_input;
-    encoder_2_input = std::vector<std::vector<std::vector<float>>>(N, std::vector<std::vector<float>>(L/2, std::vector<float>(embedding_size_, 0.0)));
-    for (size_t i = 0; i < N; i++) {
-      for (size_t j = 0; j < L/2; j++) {
-        int libcell_type_id = libcell_type_ids[i][j*2];
-        // only perform lookup if the libcell type id is valid
-        if (libcell_type_id >= 0 && libcell_type_id < libcell_type_id_to_embedding_.size()) {
-          encoder_2_input[i][j] = libcell_type_id_to_embedding_[libcell_type_id];
-        }
-      }
-    }
-
-
     // Generate the labels shape (N, L) for the transformer model integer classification labels corresponding to correct libcell ID for each cell
     // Read .size file to get cell->libcell mapping
     std::unordered_map<std::string, std::string> cell_name_to_libcell_name = readSizeFile(label_size_file_path);
@@ -1881,25 +1872,20 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       }
     }
 
-    // Also export all the extracted cells from the paths to a .txt file for debugging
-    // This is to check if there are problems with path + cell extraction
-    std::filesystem::path extracted_cells_path = std::filesystem::path(output_base_path) / "extracted_cells.txt";
-    exportInstanceCells(extracted_cells_path.string());
-
     // Save the data_array, encoder_2_input, pin_ids, cell_ids, libcell_ids, libcell_type_ids to a binary file
     // The data_array is saved as a 3D array, pin_ids, cell_ids, libcell_ids, libcell_type_ids are saved as 2D arrays
     // The data_array is saved as a float32 array, pin_ids, cell_ids, libcell_ids, libcell_type_ids are saved as int32 arrays
     // Also save the labels as a 2D array
 
-
+    std::cout << "Saving the extracted data to binary files..." << std::endl;
 
     // Save the 3D arrays
     // Group files by type using tuples (filename_suffix, data, writer_function)
     const std::vector<std::tuple<const char*, 
                                 std::vector<std::vector<std::vector<float>>>&, 
                                 void (rsz::MLGateSizer::*)(const std::string&, const std::vector<std::vector<std::vector<float>>>&)>> float3d_files = {
-        {"./data_array.bin", data_array, &rsz::MLGateSizer::writeBinaryFile3DFloat},
-        {"./encoder_2_input.bin", encoder_2_input, &rsz::MLGateSizer::writeBinaryFile3DFloat}
+        {"./data_array.bin", data_array, &rsz::MLGateSizer::writeBinaryFile3DFloat}
+        // Deleted encoder_2_input saving process as it was replaced by encoder_2_input_libcell_type_ids coupled with embedding lookup
     };
 
     //writeBinaryFile3DFloat("/home/kmcho/2_Project/ML_GateSizing_OpenROAD/dev_repo/test_scripts/pytorch_transsizer_training_code/data_array.bin", data_array);
@@ -1949,7 +1935,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     // 3) Print the speed & correctness info
     // total tokens processed: N*L
     size_t total_tokens = data_array.size() * data_array[0].size();
-    size_t total_tokens_encoder2 = encoder_2_input.size() * encoder_2_input[0].size();
+    size_t total_tokens_encoder2 = encoder_2_input_libcell_type_ids.size() * encoder_2_input_libcell_type_ids[0].size();
 
     // Calculate total padded tokens for encoder1 and encoder2
     // From encoder1 count the number of -1s in libcell_type_ids
@@ -1979,7 +1965,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     std::cout << "Total model parameters: " << model_params << std::endl;
 
     std::cout << "Total tokens for Encoder 1: " << total_tokens << ": " << data_array.size() << "X" << data_array[0].size() << std::endl;
-    std::cout << "Total tokens for Encoder 2: " << total_tokens_encoder2 << ": " << encoder_2_input.size() << "X" << encoder_2_input[0].size() << std::endl;
+    std::cout << "Total tokens for Encoder 2: " << total_tokens_encoder2 << ": " << encoder_2_input_libcell_type_ids.size() << "X" << encoder_2_input_libcell_type_ids[0].size() << std::endl;
     std::cout << "Total non-padded tokens for Encoder 1: " << total_tokens - total_padded_tokens_encoder1 << std::endl;
     std::cout << "Total non-padded tokens for Encoder 2: " << total_tokens_encoder2 - total_padded_tokens_encoder2 << std::endl;
     std::cout << "Total padded tokens for Encoder 1: " << total_padded_tokens_encoder1 << std::endl;
@@ -1988,7 +1974,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     std::cout << "Average valid length for Encoder 2: " << (total_tokens_encoder2 - total_padded_tokens_encoder2) / N << std::endl;
 
     std::cout << "1st Encoder Input shape: (" << data_array.size() << ", " << data_array[0].size() << ", " << data_array[0][0].size() << ")" << std::endl;
-    std::cout << "2nd Encoder Input shape: (" << encoder_2_input.size() << ", " << encoder_2_input[0].size() << ", " << encoder_2_input[0][0].size() << ")" << std::endl;
+    std::cout << "2nd Encoder Input shape: (" << encoder_2_input_libcell_type_ids.size() << ", " << encoder_2_input_libcell_type_ids[0].size() << ", " << embedding_size_ << ")" << std::endl;
 
 
     // Test using loaded model if transformer_weights_ is not empty
