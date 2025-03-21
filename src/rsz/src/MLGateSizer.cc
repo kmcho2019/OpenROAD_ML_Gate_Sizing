@@ -399,7 +399,7 @@ PinMetrics MLGateSizer::getPinMetrics(sta::PathExpanded& expand,
     int pin_id = pin_id_counter_;
     pin_name_to_id_[pin_name] = pin_id;
     pin_id_to_name_[pin_id] = pin_name;
-    pin_id++;
+
   }
   if (cell_name_to_id_.find(cell_name) == cell_name_to_id_.end()) {
     // Pin name doesn't exist, add it to the map with the current pin_id
@@ -408,7 +408,11 @@ PinMetrics MLGateSizer::getPinMetrics(sta::PathExpanded& expand,
     int cell_id = cell_id_counter_;
     cell_name_to_id_[cell_name] = cell_id;
     cell_id_to_name_[cell_id] = cell_name;
-    cell_id++;
+    // Fill in cell_id_to_libcell_type_id_ map
+    cell_id_to_libcell_type_id_[cell_id] = libcell_to_type_id_[cell_type];
+    // Fill in cell_id_to_libcell_id_ map
+    cell_id_to_libcell_id_[cell_id] = libcell_to_id_[cell_type];
+
   }
 
   /*
@@ -2202,6 +2206,15 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
 
         for (const auto& [cell_id, predicted_libcell_id] : cell_id_to_predicted_libcell_id) {
+          // Before resizing check that predicted_libcell_id is one of the allowed libcell types for the cell
+          // If not, skip the cell
+          // Use cell_id_to_libcell_type_id_ to get the libcell type id of the cell
+          if (libcell_id_to_libcell_type_id_[predicted_libcell_id] != cell_id_to_libcell_type_id_[cell_id]) {
+            failed_resizing++;
+            continue;
+          }
+
+
           // Get cell name from cell_id
           const std::string& cell_name = cell_id_to_name_[cell_id];
           if (cell_name.empty()) {
