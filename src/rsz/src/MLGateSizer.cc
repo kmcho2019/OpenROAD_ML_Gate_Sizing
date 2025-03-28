@@ -2050,7 +2050,22 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
           std::chrono::duration_cast<std::chrono::milliseconds>(end_ - start_).count() 
           << " ms" << std::endl;
 
-  
+        // Calculate non-padded tokens for actual output to calculate actual token throughput
+        size_t total_padded_tokens_encoder2_output = 0;
+        for (size_t i = 0; i < N; i++) {
+          for (size_t j = 0; j < L/2; j++) {
+            if (encoder_2_input_libcell_type_ids[i][j] == -1) {
+              total_padded_tokens_encoder2_output++;
+            }
+          }
+        }
+        // Calculate token throughput by taking padding token skipping into account.
+        std::cout << "Total tokens for Encoder 2 output: " << total_tokens_encoder2 << std::endl;
+        std::cout << "Total padded tokens for Encoder 2 output: " << total_padded_tokens_encoder2_output << std::endl;
+        std::cout << "Total non-padded tokens for Encoder 2 output: " << total_tokens_encoder2 - total_padded_tokens_encoder2_output << std::endl;
+        std::cout << "Ratio of non-padded tokens for Encoder 2 output: " << (double(total_tokens_encoder2 - total_padded_tokens_encoder2_output) / double(total_tokens_encoder2)) << std::endl;
+        std::cout << "Actual Token Throughput (for non-padded tokens only): " << (1e6 * double(total_tokens_encoder2 - total_padded_tokens_encoder2_output) / double(loaded_eigen_us)) << " tokens/sec" << std::endl;
+        std::cout << "Effective Token Throughput (for all tokens): " << (1e6 * double(total_tokens_encoder2) / double(loaded_eigen_us)) << " tokens/sec" << std::endl;
       }
 
       // Based on loaded_eigen_output, determine gate sizes, calculate accuracy (compared to label), and apply the gate sizes to the design
@@ -2098,6 +2113,7 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       if (total_cells > 0) {
         accuracy = (float)num_correct / (float)total_cells;
       }
+
 
       std::cout << "Number of non-padding token cells: " << total_cells << std::endl;
       std::cout << "Number of correct predictions: " << num_correct << std::endl;
@@ -4472,6 +4488,17 @@ static void eigenLayerNorm(Eigen::MatrixXf& seq, float eps=1e-5f)
   }
 }
 
+// --- Helper to find actual sequence length ---
+// Finds the length of the sequence excluding trailing padding tokens (-1)]
+// Used to skip operations on padding tokens.
+static int getActualLength(const std::vector<int>& ids) {
+  int actual_len = ids.size();
+  while (actual_len > 0 && ids[actual_len - 1] == -1) {
+      actual_len--;
+  }
+  return actual_len;
+}
+
 // --------------------------------------------------------------------
 // runTransformerEigen: Projects data_array from D_in -> D_model (divisible by H),
 // runs M encoder layers, then projects back to D_in if desired.
@@ -4602,11 +4629,27 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
   
   // For each sequence in the batch:
   for (size_t n = 0; n < N; n++) {
-    // 1) Build the combined input seq of shape [L x (D_in + D_emb)]
-    // Combine the numeric data and libcell embeddings
-    Eigen::MatrixXf seq(L, D_in + D_emb);
 
-    for (size_t l = 0; l < L; l++) {
+    // --- Determine Actual Lengths ---
+    // To skip operations on padding tokens
+    int actual_L = getActualLength(encoder_1_libcell_ids[n]);
+    int actual_L2 = getActualLength(encoder_2_libcell_type_ids[n]);
+
+    // Handle case where actual length might be 0
+    if (actual_L <= 0) {
+        continue; // Skip to the next sequence
+    }
+     if (actual_L2 <= 0 && num_encoder_layers_2 > 0) {
+        continue; // Skip to the next sequence
+    }
+
+    // --- Encoder 1 ---
+
+    // 1) Build the combined input seq of shape [actual_L x (D_in + D_emb)]
+    // Combine the numeric data and libcell embeddings
+    Eigen::MatrixXf seq(actual_L, D_in + D_emb);
+
+    for (size_t l = 0; l < actual_L; l++) {
       
       // Get the libcell id for this position
       // If the libcell id is -1, it's a padding token
@@ -4633,21 +4676,21 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     }
 
     // First encoder: self-attention
-    // 2) Project seq => [L x D_model]
+    // 2) Project seq => [actual_L x D_model]
     Eigen::MatrixXf seq_proj = seq * W_in;
 
     // 3) Run through encoder blocks
-    Eigen::MatrixXf x = seq_proj; // shape [L x D_model]
+    Eigen::MatrixXf x = seq_proj; // shape [actual_L x D_model]
     for (int layer = 0; layer < num_encoder_layers; layer++) {
       // (a) Multi-head self-attention
-      auto attn_out = eigenSelfAttention(x, num_heads, D_model, L, Wq, Wk, Wv, Wo);
+      auto attn_out = eigenSelfAttention(x, num_heads, D_model, actual_L, Wq, Wk, Wv, Wo);
       // (b) Residual
       x += attn_out;
       // (c) LayerNorm
       eigenLayerNorm(x);
 
       // (d) FeedForward
-      auto ff_out = eigenFF(x, L, D_model, FF_hidden_dim, FF_W1, FF_W2, FF_b1, FF_b2);
+      auto ff_out = eigenFF(x, actual_L, D_model, FF_hidden_dim, FF_W1, FF_W2, FF_b1, FF_b2);
       // (e) Residual
       x += ff_out;
       // (f) LayerNorm
@@ -4655,9 +4698,9 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     }
 
     // Second encoder: cross-attention
-    // 4) Project seq => [L/2 x D_model]
-    Eigen::MatrixXf seq_proj2(L2, D_emb);
-    for (size_t l = 0; l < L2; l++) {
+    // 4) Project seq => [actual_L2(L/2) x D_model]
+    Eigen::MatrixXf seq_proj2(actual_L2, D_emb);
+    for (size_t l = 0; l < actual_L2; l++) {
       // Get the libcell type id for this position
       // If the libcell type id is -1, it's a padding token
       int libcell_type_id = encoder_2_libcell_type_ids[n][l];
@@ -4684,14 +4727,14 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     // 6) Run through 2nd encoder blocks
     for (int layer_2 = 0; layer_2 < num_encoder_layers_2; layer_2++) {
       // (a) Multi-head cross-attention
-      auto attn_out2 = eigenCrossAttention(x2, x, num_heads, D_model, L2, L, Wq, Wk, Wv, Wo);
+      auto attn_out2 = eigenCrossAttention(x2, x, num_heads, D_model, actual_L2, L, Wq, Wk, Wv, Wo);
       // (b) Residual
       x2 += attn_out2;
       // (c) LayerNorm
       eigenLayerNorm(x2);
 
       // (d) FeedForward
-      auto ff_out2 = eigenFF(x2, L2, D_model, FF_hidden_dim, FF_W1, FF_W2, FF_b1, FF_b2);
+      auto ff_out2 = eigenFF(x2, actual_L2, D_model, FF_hidden_dim, FF_W1, FF_W2, FF_b1, FF_b2);
       // (e) Residual
       x2 += ff_out2;
       // (f) LayerNorm
@@ -4701,13 +4744,13 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
 
 
-    // x is now [L/2 x D_model]. Project back to [L/2 x D_out]
-    // 7) Project x2 => [L/2 x D_out]
+    // x is now [actual_L2(L/2) x D_model]. Project back to [actual_L2(L/2) x D_out]
+    // 7) Project x2 => [actual_L2(L/2) x D_out]
     Eigen::MatrixXf final_out = x2 * W_out;
 
     // 8) Apply softmax to each row like a classification head
     // Conduct softmax over D_out dimension to get class probabilities
-    for (size_t l = 0; l < L2; l++) {
+    for (size_t l = 0; l < actual_L2; l++) {
       float max_val = final_out.row(l).maxCoeff();
       final_out.row(l) = (final_out.row(l).array() - max_val).exp();
       float sum_ = final_out.row(l).sum();
@@ -4716,7 +4759,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
     // 9) Store final_out in output[n]
     // Store final_out in output[n]
-    for (size_t l = 0; l < L2; l++) {
+    for (size_t l = 0; l < actual_L2; l++) {
       for (size_t d = 0; d < D_out; d++) {
         output[n][l][d] = final_out(l, d);
       }
@@ -4784,11 +4827,27 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
   // For each sequence in the batch:
   for (size_t n = 0; n < N; n++) {
 
-    // 1) Build the combined input seq of shape [L x (D_in + D_emb)]
-    // Combine the numeric data and libcell embeddings
-    Eigen::MatrixXf seq(L, D_in + D_emb);
 
-    for (size_t l = 0; l < L; l++) {
+    // --- Determine Actual Lengths ---
+    // To skip operations on padding tokens
+    int actual_L = getActualLength(encoder_1_libcell_ids[n]);
+    int actual_L2 = getActualLength(encoder_2_libcell_type_ids[n]);
+
+    // Handle case where actual length might be 0
+    if (actual_L <= 0) {
+        continue; // Skip to the next sequence
+    }
+     if (actual_L2 <= 0 && num_encoder_layers_2 > 0) {
+        continue; // Skip to the next sequence
+    }
+
+    // --- Encoder 1 ---
+
+    // 1) Build the combined input seq of shape [actual_L x (D_in + D_emb)]
+    // Combine the numeric data and libcell embeddings
+    Eigen::MatrixXf seq(actual_L, D_in + D_emb);
+
+    for (size_t l = 0; l < actual_L; l++) {
       
       // Get the libcell id for this position
       // If the libcell id is -1, it's a padding token
@@ -4815,21 +4874,21 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     }
     //std::cout << "Debug 3" << std::endl;
     // First encoder: self-attention
-    // 2) Project seq => [L x D_model]
+    // 2) Project seq => [actual_L x D_model]
     Eigen::MatrixXf seq_proj = seq * weights.W_in1;
     //std::cout << "Debug 4" << std::endl;
     // 3) Run through encoder blocks
-    Eigen::MatrixXf x = seq_proj; // shape [L x D_model]
+    Eigen::MatrixXf x = seq_proj; // shape [actual_L x D_model]
     for (int layer = 0; layer < num_encoder_layers; layer++) {
       // (a) Multi-head self-attention
-      auto attn_out = eigenSelfAttention(x, num_heads, D_model, L, weights.encoder1_0_Wq_1[layer], weights.encoder1_0_Wk_1[layer], weights.encoder1_0_Wv_1[layer], weights.encoder1_0_Wo_1[layer]);
+      auto attn_out = eigenSelfAttention(x, num_heads, D_model, actual_L, weights.encoder1_0_Wq_1[layer], weights.encoder1_0_Wk_1[layer], weights.encoder1_0_Wv_1[layer], weights.encoder1_0_Wo_1[layer]);
       // (b) Residual
       x += attn_out;
       // (c) LayerNorm
       eigenLayerNorm(x);
 
       // (d) FeedForward
-      auto ff_out = eigenFF(x, L, D_model, FF_hidden_dim, weights.encoder1_0_FF_W1_1[layer], weights.encoder1_0_FF_W2_1[layer], weights.encoder1_0_FF_b1_1[layer], weights.encoder1_0_FF_b2_1[layer]);
+      auto ff_out = eigenFF(x, actual_L, D_model, FF_hidden_dim, weights.encoder1_0_FF_W1_1[layer], weights.encoder1_0_FF_W2_1[layer], weights.encoder1_0_FF_b1_1[layer], weights.encoder1_0_FF_b2_1[layer]);
       // (e) Residual
       x += ff_out;
       // (f) LayerNorm
@@ -4837,9 +4896,9 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     }
     //std::cout << "Debug 5" << std::endl;
     // Second encoder: cross-attention
-    // 4) Project seq => [L/2 x D_model]
-    Eigen::MatrixXf seq_proj2(L2, D_emb);
-    for (size_t l = 0; l < L2; l++) {
+    // 4) Project seq => [actual_L2(L/2) x D_model]
+    Eigen::MatrixXf seq_proj2(actual_L2, D_emb);
+    for (size_t l = 0; l < actual_L2; l++) {
       // Get the libcell type id for this position
       // If the libcell type id is -1, it's a padding token
       int libcell_type_id = encoder_2_libcell_type_ids[n][l];
@@ -4866,14 +4925,14 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
     // 6) Run through 2nd encoder blocks
     for (int layer_2 = 0; layer_2 < num_encoder_layers_2; layer_2++) {
       // (a) Multi-head cross-attention
-      auto attn_out2 = eigenCrossAttention(x2, x, num_heads, D_model, L2, L, weights.encoder2_0_Wq_2[layer_2], weights.encoder2_0_Wk_2[layer_2], weights.encoder2_0_Wv_2[layer_2], weights.encoder2_0_Wo_2[layer_2]);
+      auto attn_out2 = eigenCrossAttention(x2, x, num_heads, D_model, actual_L2, L, weights.encoder2_0_Wq_2[layer_2], weights.encoder2_0_Wk_2[layer_2], weights.encoder2_0_Wv_2[layer_2], weights.encoder2_0_Wo_2[layer_2]);
       // (b) Residual
       x2 += attn_out2;
       // (c) LayerNorm
       eigenLayerNorm(x2);
 
       // (d) FeedForward
-      auto ff_out2 = eigenFF(x2, L2, D_model, FF_hidden_dim, weights.encoder2_0_FF_W1_2[layer_2], weights.encoder2_0_FF_W2_2[layer_2], weights.encoder2_0_FF_b1_2[layer_2], weights.encoder2_0_FF_b2_2[layer_2]);
+      auto ff_out2 = eigenFF(x2, actual_L2, D_model, FF_hidden_dim, weights.encoder2_0_FF_W1_2[layer_2], weights.encoder2_0_FF_W2_2[layer_2], weights.encoder2_0_FF_b1_2[layer_2], weights.encoder2_0_FF_b2_2[layer_2]);
       // (e) Residual
       x2 += ff_out2;
       // (f) LayerNorm
@@ -4889,7 +4948,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
     // 8) Apply softmax to each row like a classification head
     // Conduct softmax over D_out dimension to get class probabilities
-    for (size_t l = 0; l < L2; l++) {
+    for (size_t l = 0; l < actual_L2; l++) {
       float max_val = final_out.row(l).maxCoeff();
       final_out.row(l) = (final_out.row(l).array() - max_val).exp();
       float sum_ = final_out.row(l).sum();
@@ -4898,7 +4957,7 @@ std::vector<std::vector<std::vector<float>>> MLGateSizer::runTransformerEigen(  
 
     // 9) Store final_out in output[n]
     // Store final_out in output[n]
-    for (size_t l = 0; l < L2; l++) {
+    for (size_t l = 0; l < actual_L2; l++) {
       for (size_t d = 0; d < D_out; d++) {
         output[n][l][d] = final_out(l, d);
       }
