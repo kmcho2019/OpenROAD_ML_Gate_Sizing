@@ -2239,6 +2239,17 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
             continue;
           }
 
+          // Check if instance is firmly/fixed placed, if so, skip the cell
+          // This is because replaceCell() conducts legalization and it may move the cell
+          // Convert sta::Instance* to dbInst* and use getPlacementStatus()
+          // Check if status isFixed() or not
+          dbInst* db_drvr = db_network_->staToDb(drvr);
+          if (db_drvr->getPlacementStatus().isFixed()) {
+            skipped_cells[cell_id] = cell_name;
+            std:: cout << "Cell " << cell_name << " is firmly placed, resizing skipped for this cell" << std::endl;
+            continue;
+          }
+
           // Get libcell name from predicted_libcell_id
           // Check if the predicted_libcell_id is valid, if invalid empty string is returned
           const std::string& libcell_name = predicted_libcell_id < ordered_libcells_.size() ?
