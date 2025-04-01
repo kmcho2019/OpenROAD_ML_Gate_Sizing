@@ -249,7 +249,7 @@ public:
 		
 private:
 		size_t findMaxSeqLen() {
-				size_t max_len = 128; // Default max sequence length (can be adjusted)
+				size_t max_len = 0; // Default max sequence length (can be adjusted)
 				for (const auto& seq : sequences_) {
 						max_len = std::max(max_len, seq.size());
 				}
