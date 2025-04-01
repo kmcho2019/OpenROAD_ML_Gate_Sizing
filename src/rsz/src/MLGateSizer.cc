@@ -603,17 +603,27 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
   // Get all instances in the design
   odb::dbSet<dbInst> insts_temp = sta_->db()->getChip()->getBlock()->getInsts();
 
+  // Store all of the original sizes of the instances
+  std::unordered_map<std::string, std::string> instance_name_to_original_libcell_name;
+
   // First pass: identify all register cells
   std::vector<sta::Instance*> register_insts;
   for (dbInst* db_inst : insts_temp) {
     sta::Instance* inst = db_network_->dbToSta(db_inst);
     if (!inst) continue;
+
+    // Update instance_name_to_original_libcell_name
+    std::string instance_name = network_->name(inst);
+    std::string instance_original_libcell_name = network_->libertyCell(inst)->name();
+    instance_name_to_original_libcell_name[instance_name] = instance_original_libcell_name;
+    
     
     sta::Cell* cell = network_->cell(inst);
     if (!cell) continue;
     
     sta::LibertyCell* lib_cell = network_->libertyCell(inst);
     if (!lib_cell) continue;
+
     
     // Check if this is a sequential cell (flipflop)
     if (lib_cell->hasSequentials()) {
@@ -2198,7 +2208,8 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       // Debugging flag, use label .size file to resize the cells in the design
       std::map<int, std::string> updated_cells; 
       std::map<int, std::string> skipped_cells;
-      size_t num_resized_cells = 0;
+      size_t num_resized_cells = 0;  // Succesful resize operations does not necessarily mean the cell was changed from original
+      size_t num_changed_cells = 0;  // Number of cells that were changed within num_resized_cells
       size_t failed_resizing = 0;
       
       if (!size_with_label) {
@@ -2297,6 +2308,13 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
           if (resize_success) {
             updated_cells[cell_id] = libcell_name;//cell_name;
             num_resized_cells++;
+            // Check if the cell was actually changed
+            // If the cell was changed, increment num_changed_cells
+            // Use instance_name_to_original_libcell_name to get the original libcell name
+            std::string original_libcell_name = instance_name_to_original_libcell_name[cell_id_to_name_[cell_id]];
+            if (original_libcell_name != libcell_name) {
+              num_changed_cells++;
+            }
           } else {
             logger_->error(utl::RSZ, 1048, "Failed to resize cell {} to libcell {} (applyPredictions)", 
                           cell_name, libcell_name);
@@ -2413,11 +2431,13 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       // Print resizing summary statistics
       std::cout << "\nCell Resizing Summary:\n";
       std::cout << "====================\n";
-      std::cout << "Total cells in design: " << network_->instanceCount() << "\n";
-      std::cout << "Total cells processed: " << cell_id_to_predicted_libcell_id.size() << "\n";
-      std::cout << "Successfully resized:  " << updated_cells.size() << "\n";
-      std::cout << "Skipped (don't touch): " << skipped_cells.size() << "\n";
-      std::cout << "Failed to resize:      " << failed_resizing << "\n";
+      std::cout << "Total cells in design:   " << instance_name_to_original_libcell_name.size() << "\n";
+      std::cout << "Total cells processed:   " << cell_id_to_predicted_libcell_id.size() << "\n";
+      std::cout << "Resize op succeeded for: " << updated_cells.size() << "\n";
+      std::cout << "  -> Cells changed:      " << num_changed_cells << "\n";
+      std::cout << "  -> Cells not changed:  " << updated_cells.size() - num_changed_cells << "\n";
+      std::cout << "Skipped (don't touch):   " << skipped_cells.size() << "\n";
+      std::cout << "Failed to resize:        " << failed_resizing << "\n";
 
       // Print first few updated and skipped cells for verification
       const size_t max_print = 5;
@@ -2436,6 +2456,98 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
         if (print_count++ >= max_print) break;
         std::cout << cell_id_to_name_[id] << " -> " << libcell << "\n";
       }
+
+      // Try to calculate statistics of the updated cells and Print them
+      // Try to use instance_name_to_original_libcell_name (original)
+      // Try to use cell_name_to_libcell_name (golden)
+      // Try to use cell_id_to_predicted_libcell_id (predicted) or cell_id_to_libcell_id (label) depending on the flag
+      // Number of instances/cells in the design
+      // Number of instances/cells included within sizer path (doesn't include the skipped cells)
+      // Number of instances/cells updated (changed from original libcell to new libcell)
+      // Number of instances/cells changed from original to golden label
+      // Number of instances/cells changed from original to predicted libcell
+      // Number of instances/cells changed from original shared by golden label and predicted libcell
+
+      size_t num_changed_from_original_to_golden = 0;
+      size_t num_changed_from_original_to_predicted = 0;
+      size_t num_changed_from_original_shared_with_golden_and_predicted = 0;
+      size_t num_changed_from_golden_different_from_predicted = 0;
+      size_t num_changed_from_golden_not_in_predicted = 0;
+      size_t num_changed_from_golden_not_changed_from_predicted = 0;
+      size_t num_changed_from_original_to_predicted_shared_in_golden = 0;
+      size_t num_changed_from_original_to_predicted_different_from_golden = 0;
+
+      // Iterate through all instances in the design using instance_name_to_original_libcell_name
+      for (const auto& [inst_name, original_libcell_name] : instance_name_to_original_libcell_name) {
+        std::string golden_libcell_name = cell_name_to_libcell_name[inst_name];
+        int inst_cell_id = -1;
+        // Get the cell id corresponding to the instance name if it exists
+        if (cell_name_to_id_.find(inst_name) != cell_name_to_id_.end()) {
+          inst_cell_id = cell_name_to_id_[inst_name];
+        }
+        if (golden_libcell_name != original_libcell_name) {
+          num_changed_from_original_to_golden++;
+
+          if (inst_cell_id == -1) {
+            num_changed_from_golden_not_in_predicted++;
+          }
+          else {
+            std::string predicted_libcell_name = updated_cells[inst_cell_id];
+            if (predicted_libcell_name == golden_libcell_name) {
+              num_changed_from_original_shared_with_golden_and_predicted++;
+            }
+            else if (predicted_libcell_name == original_libcell_name) {
+              num_changed_from_golden_not_changed_from_predicted++;
+            }
+            else {
+              num_changed_from_golden_different_from_predicted++;
+            }
+
+            
+          }
+        }
+
+        // Check for changes predicted introduces not in golden
+        if (inst_cell_id != -1) {
+          // Also check if inst_cell_id is in updated_cells
+          // If not, then it is not in the predicted libcell ID
+          if (updated_cells.find(inst_cell_id) != updated_cells.end()) {
+            std::string predicted_libcell_name = updated_cells[inst_cell_id];
+            if (predicted_libcell_name != original_libcell_name) {
+              if (predicted_libcell_name == golden_libcell_name) {
+                num_changed_from_original_to_predicted_shared_in_golden++;
+              }
+              else {
+                num_changed_from_original_to_predicted_different_from_golden++;
+              }
+              num_changed_from_original_to_predicted++;
+            }
+          }
+        }
+
+      
+
+      }
+
+
+    
+
+      std::cout << "\nCell Resizing Statistics:\n";
+      std::cout << "=========================\n";
+      std::cout << "Total number of instances/cells in original: " << instance_name_to_original_libcell_name.size() << "\n";
+      std::cout << "Total number of instances/cells in label: " << cell_name_to_libcell_name.size() << "\n";
+      std::cout << "Total number of instances/cells included within sizer path: " << cell_id_to_name_.size() - 1 << "\n"; // -1 to subtract the port
+      std::cout << "1) Golden changes from original: " << num_changed_from_original_to_golden << "\n";
+      std::cout << "    -> Golden changes also in predicted: " << num_changed_from_original_shared_with_golden_and_predicted << "\n";
+      std::cout << "    -> Golden changes but not in predicted: " << num_changed_from_golden_not_in_predicted << "\n";
+      std::cout << "    -> Golden changes but predicted reverts to original: " << num_changed_from_golden_not_changed_from_predicted << "\n";
+      std::cout << "    -> Golden changes but predicted changes differently: " << num_changed_from_golden_different_from_predicted << "\n";
+      std::cout << "2) Predicted changes from original: " << num_changed_from_original_to_predicted << "\n";
+      std::cout << "    -> Predicted changes from original same as golden: " << num_changed_from_original_to_predicted_shared_in_golden << "\n";
+      std::cout << "    -> Predicted changes from original different from golden: " << num_changed_from_original_to_predicted_different_from_golden << "\n";
+      
+      
+
 
 
       // Save .size file with the predicted libcell IDs
