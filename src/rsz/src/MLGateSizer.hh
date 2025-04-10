@@ -18,6 +18,9 @@
 #include <Eigen/Dense>
 #include <filesystem> // Include for filesystem operations
 
+#include <functional> // For std::hash
+#include <utility> // For std::pair
+
 namespace sta {
 class PathExpanded;
 }
@@ -346,6 +349,39 @@ struct TransformerWeights
 		// (Add LayerNorm weights if needed, etc.)
 };
 
+// --- Custom Hash Functor for std::vector<int> ---
+// Needed because std::vector doesn't have a default std::hash specialization.
+struct VectorHasher {
+    std::size_t operator()(const std::vector<int>& vec) const {
+        std::size_t seed = vec.size();
+        // Combine hashes of individual elements
+        // Uses a common technique similar to boost::hash_combine
+        for (int i : vec) {
+            // std::hash<int>{}(i) gets the hash of the integer
+            // 0x9e3779b9 is a magic number (golden ratio conjugate)
+            seed ^= std::hash<int>{}(i) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        }
+        return seed;
+    }
+};
+
+// Used for filtering duplicates and collecting stats on pin sequences
+// This function will return unique sequences and also provide stats on duplicates
+// The function uses an unordered_map to count occurrences of each sequence
+// --- Function to Filter and Collect Stats ---
+struct FilterStatsResult {
+    std::vector<std::vector<int>> unique_sequences;
+    std::vector<std::pair<std::vector<int>, int>> duplicate_info; // {sequence, count}
+    int total_duplicates_removed = 0;
+};
+
+FilterStatsResult FilterDuplicatesAndGetStats(const std::vector<std::vector<int>>& input_sequences);
+
+
+
+// Helper function to remove trailing -1s (padding value)
+std::vector<int> RemoveTrailingNegOnes(const std::vector<int>& vec);
+
 class MLGateSizer : public sta::dbStaState
 {
  public:
@@ -450,8 +486,16 @@ class MLGateSizer : public sta::dbStaState
   // Export Extracted Instance Cells
   void exportInstanceCells(const std::string& filename);  // Export instance cells into a text file
 
-	// Read .size file to generate labels
-	std::unordered_map<std::string, std::string> readSizeFile(const std::string& filename);
+  // Export extracted pin sequences
+  // Export pin sequences into a text file
+  void ExportPinSequences(const std::vector<std::vector<int>>& pin_ids, const std::string& filename);
+  
+  // Export endpoints of design
+  // Used for debugging and troubleshooting
+  void exportEndpoints(const std::string& filename);
+
+  // Read .size file to generate labels
+  std::unordered_map<std::string, std::string> readSizeFile(const std::string& filename);
 
   void generateLibcellOrdering(const std::vector<std::string>& libcells);
   void saveEmbeddingsBinary(const std::string& filename);

@@ -1764,6 +1764,10 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
 
     // Check if Cell ID and Libcell Type ID are consistent and if they occur in pairs (e.g. 4 4 0 0 1 1 2 2 3 3)
 
+    // Also export all of the endpoints of design to a .txt file for debugging
+    std::filesystem::path endpoints_path = std::filesystem::path(output_base_path) / "design_endpoints.txt";
+    std::cout << "Exporting endpoints to: " << endpoints_path.string() << std::endl;
+    exportEndpoints(endpoints_path.string());
 
     // Also export all the extracted cells from the paths to a .txt file for debugging
     // This is to check if there are problems with path + cell extraction
@@ -1771,8 +1775,41 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
     std::cout << "Exporting extracted cells to: " << extracted_cells_path.string() << std::endl;
     exportInstanceCells(extracted_cells_path.string());
 
+    // Also within pin_ids check for duplicates and also export the pin names for each sequence
+    // This is to check if there are problems with path + cell extraction
 
+    std::vector<std::vector<int>> pin_ids_padding_removed;
+    pin_ids_padding_removed.reserve(pin_ids.size());
+    for (const auto& seq : pin_ids) {
+      pin_ids_padding_removed.push_back(RemoveTrailingNegOnes(seq));
+    }
+    // Calculate Duplicate Pin Sequences
+    FilterStatsResult pin_ids_stats = FilterDuplicatesAndGetStats(pin_ids_padding_removed);
+    // Print stats
+    std::cout << "Number of unique pin sequences: " << pin_ids_stats.unique_sequences.size() << std::endl;
+    // Print top 5 number of duplicates
+    std::cout << "Top 5 number of duplicates: " << std::endl;
+    for (size_t i = 0; i < 5 && i < pin_ids_stats.duplicate_info.size(); i++) {
+      std::cout << "Sequence " << i << ": " << pin_ids_stats.duplicate_info[i].second << " duplicates" << std::endl;
+    }
+    // Also print several stats about duplicates, e.g. number of duplicates, number of unique sequences, mean, median, max, min, etc.
+    std::vector<int> pin_seq_duplicate_counts;
+    for (const auto& seq : pin_ids_stats.duplicate_info) {
+      pin_seq_duplicate_counts.push_back(seq.second);
+    }
+    std::cout << "Mean number of duplicates: " << std::accumulate(pin_seq_duplicate_counts.begin(), pin_seq_duplicate_counts.end(), 0.0) / pin_seq_duplicate_counts.size() << std::endl;
+    std::cout << "Median number of duplicates: " << pin_seq_duplicate_counts[pin_seq_duplicate_counts.size() / 2] << std::endl;
+    std::cout << "Max number of duplicates: " << pin_seq_duplicate_counts[pin_seq_duplicate_counts.size() - 1] << std::endl;
+    std::cout << "Min number of duplicates: " << pin_seq_duplicate_counts[0] << std::endl;
+    std::cout << "Number of duplicates: " << pin_ids_stats.duplicate_info.size() << std::endl;
     
+
+
+    std::filesystem::path extracted_pins_path = std::filesystem::path(output_base_path) / "extracted_pinsequences.txt";
+    std::cout << "Exporting extracted pins to: " << extracted_pins_path.string() << std::endl;
+    ExportPinSequences(pin_ids, extracted_pins_path.string());
+
+
     /*
     // Print out the slack of each path (for debugging), remove later
     for (size_t i = 0; i < path_slacks.size(); i++) {
@@ -5198,6 +5235,176 @@ void MLGateSizer::exportInstanceCells(const std::string& filename)
 
 }
 
+// Exports sequences of pin IDs to a file, using the class member map for names.
+//
+// Each line in the output file corresponds to one sequence from pin_ids.
+// Within a line, pin names (looked up from the member 'cell_id_to_name_')
+// are separated by commas. Padding integer values of -1 are ignored.
+//
+// Args:
+//   pin_ids: A vector of vectors, where each inner vector contains a sequence
+//            of integer pin IDs, potentially padded with -1 at the end.
+//   filename: The file path where the output should be written.
+//
+// Returns:
+//   void. Errors are reported to std::cerr.
+void MLGateSizer::ExportPinSequences(
+  const std::vector<std::vector<int>>& pin_ids,
+  const std::string& filename) {
+  // 1. Open the output file stream.
+  std::ofstream output_file(filename);
+  if (!output_file.is_open()) {
+    std::cerr << "Error: [" << __func__ << "] Could not open file for writing: "
+              << filename << std::endl;
+    return; // Exit function on file open error
+  }
+
+  // 2. Iterate through each sequence of pin IDs.
+  for (const auto& sequence : pin_ids) {
+    bool is_first_pin_written = true; // To handle comma placement correctly
+
+    // 3. Iterate through each pin ID in the current sequence.
+    for (int pin_id : sequence) {
+      // 3a. Ignore padding integers (-1).
+      if (pin_id == -1) {
+        continue; // Skip to the next pin ID in the sequence
+      }
+
+      // 4. Look up the pin name from the member map 'pin_id_to_name_'.
+      //    Using 'this->' is optional but clarifies access to a member variable.
+      auto it = this->pin_id_to_name_.find(pin_id);
+      std::string pin_name;
+
+      if (it != this->pin_id_to_name_.end()) {
+        pin_name = it->second;
+      } else {
+        // Handle cases where the pin ID is not found in the map.
+        std::cerr << "Warning: [" << __func__ << "] Pin ID " << pin_id
+                  << " not found in pin_id_to_name_ map. Using placeholder."
+                  << std::endl;
+        pin_name = "<UNKNOWN_PIN_ID_" + std::to_string(pin_id) + ">";
+        // Consider if this warning should be logged differently or if this
+        // case represents a critical error depending on application needs.
+      }
+
+      // 5. Add comma separator before subsequent pins in the line.
+      if (!is_first_pin_written) {
+        output_file << ",";
+      } else {
+        // Set to false now that we are about to write the first valid pin
+        is_first_pin_written = false;
+      }
+
+      // 6. Write the pin name to the file.
+      output_file << pin_name;
+
+      // Check for write errors (optional but recommended).
+      if (!output_file) {
+        std::cerr << "Error: [" << __func__ << "] Failed to write pin name to file: "
+                  << filename << std::endl;
+        // Since return type is void, we just report and exit.
+        // The file might be left in an incomplete state.
+        return;
+      }
+
+    } // End of inner loop (pins in a sequence)
+
+    // 7. Write a newline character *only if* at least one valid pin
+    //    (i.e., not -1) was found and written for this sequence.
+    if (!is_first_pin_written) {
+        output_file << "\n";
+
+        // Check for write errors after newline (optional).
+        if (!output_file) {
+            std::cerr << "Error: [" << __func__ << "] Failed to write newline to file: "
+                      << filename << std::endl;
+            return;
+        }
+    }
+    // If is_first_pin_written is still true here, it means the sequence
+    // was either empty or contained only -1 values, so we don't write a line.
+
+  } // End of outer loop (sequences)
+
+  // 8. File is automatically closed when output_file goes out of scope (RAII).
+  //    No explicit return value to indicate success/failure per prototype.
+  //    Any errors should have been reported to std::cerr.
+}
+
+// Exports the endpoints of the sequences to a file.
+// For each endpoint one line is written.
+void MLGateSizer::exportEndpoints(const std::string& filename)
+{
+  sta::VertexSet* design_endpoints = sta_->endpoints();
+  std::ofstream output_file(filename);
+  if (!output_file.is_open()) {
+    std::cerr << "Error: [" << __func__ << "] Could not open file for writing: "
+              << filename << std::endl;
+    return; // Exit function on file open error
+  }
+  for (auto& endpoint : *design_endpoints) {
+    sta::Pin* pin = endpoint->pin();
+    if (pin) {
+      std::string pin_name = network_->name(pin);
+      output_file << pin_name << "\n";
+    } else {
+      std::cerr << "Warning: [" << __func__ << "] Endpoint has no associated pin." << std::endl;
+    }
+  }
+  if (!output_file) {
+    std::cerr << "Error: [" << __func__ << "] Failed to write to file: "
+              << filename << std::endl;
+  }
+  // File is automatically closed when output_file goes out of scope (RAII).
+}
+
+// Helper function to remove trailing -1s (padding value)
+std::vector<int> RemoveTrailingNegOnes(const std::vector<int>& vec) {
+  // Find the last element that is not -1
+  auto it = std::find_if(vec.rbegin(), vec.rend(),
+                         [](int val) { return val != -1; });
+
+  // Determine the end iterator for the non-padding part
+  // it.base() converts the reverse_iterator to the corresponding forward_iterator
+  // which points one element *past* the element found by find_if
+  auto end_non_padding = it.base();
+
+  // Create a new vector containing elements from the beginning up to the
+  // first trailing -1 (or the end if no -1s found).
+  return std::vector<int>(vec.begin(), end_non_padding);
+}
+
+FilterStatsResult FilterDuplicatesAndGetStats(
+  const std::vector<std::vector<int>>& input_sequences)
+{
+  // Map: Key = sequence, Value = count
+  std::unordered_map<std::vector<int>, int, VectorHasher> sequence_counts;
+
+  // 1. Count occurrences of each sequence
+  for (const auto& seq : input_sequences) {
+      sequence_counts[seq]++; // Increments count or inserts {seq, 1} if new
+  }
+
+  FilterStatsResult result;
+  result.unique_sequences.reserve(sequence_counts.size()); // Optimization
+
+  // 2. Populate results from the map
+  for (const auto& pair : sequence_counts) {
+      const std::vector<int>& seq = pair.first;
+      int count = pair.second;
+
+      // Add to the list of unique sequences (every sequence in the map is unique)
+      result.unique_sequences.push_back(seq);
+
+      // If count > 1, it was duplicated
+      if (count > 1) {
+          result.duplicate_info.push_back({seq, count});
+          result.total_duplicates_removed += (count - 1); // Add how many were removed
+      }
+  }
+
+  return result;
+}
 
 
 }  // namespace rsz
