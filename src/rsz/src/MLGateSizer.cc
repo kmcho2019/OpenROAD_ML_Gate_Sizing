@@ -169,12 +169,92 @@ PinSequenceCollector MLGateSizer::collectPinMetrics(sta::PathEndSeq& path_ends)
   sta::LibertyLibrary* lib = network_->defaultLibertyLibrary();
   sta::Corner* corner = sta_->cmdCorner();
 
+
+  // Random number generation
+  std::mt19937 random_generator;
+  std::uniform_real_distribution<float> uniform_distribution;
+
+  // --- Determine Sampling Parameters ---
+  // Find the maximum positive slack.
+  // IMPORTANT: This assumes path_ends is sorted by slack ascending.
+  // If not sorted, you must iterate through path_ends once to find the true max slack.
+  float max_slack_in_set = path_ends.back()->slack(sta_);
+  float max_positive_slack = std::max(0.0f, max_slack_in_set);
+
+  // Calculate the target slack where probability should be 0.1
+  float target_slack_for_p01 = 0.5f * max_positive_slack;
+
+  // Calculate the exponential decay factor 'k' for P(slack) = exp(-k * slack)
+  // such that P(target_slack_for_p01) = 0.1
+  // exp(-k * target_slack_for_p01) = 0.1
+  // -k * target_slack_for_p01 = log(0.1)
+  // k = -log(0.1) / target_slack_for_p01 = log(10) / target_slack_for_p01
+  float decay_factor_k = 0.0f;
+  const float log10 = std::log(10.0f); // Natural log of 10 approx 2.302585
+  const float epsilon = 1e-12f; // Small value to prevent division by zero
+
+  if (target_slack_for_p01 > epsilon) {
+      decay_factor_k = log10 / target_slack_for_p01;
+      std::cout << "Calibrated sampling: MaxPosSlack=" << max_positive_slack
+                << "ns, TargetSlack(P=0.1)=" << target_slack_for_p01
+                << "ns, DecayFactor(k)=" << decay_factor_k << std::endl;
+  } else {
+      // Handle cases where max positive slack is zero or very small.
+      // In this case, effectively only slack = 0.0 has P=1, others P=0.
+      decay_factor_k = std::numeric_limits<float>::infinity(); // Acts as immediate decay
+      std::cout << "Calibrated sampling: MaxPosSlack near zero. Only slack <= 0 will be reliably accepted." << std::endl;
+  }
+  // --- End Sampling Parameter Calculation ---
+
+  int path_count = 0;
+  int neg_slack_count = 0;
+  int accepted_count = 0;
+
   // similar usage found in TritonPart.cpp, BuildTimingPaths()
   for (auto& path_end : path_ends) { 
+    path_count++;
     auto* path = path_end->path();
     if (!path || path->isNull()) {
       continue;
     }
+    const float slack = path_end->slack(sta_); // slack information
+    
+    // *** Calibrated Slack-Based Sampling Decision ***
+    float acceptance_probability = 0.0f;
+
+    if (slack < 0.0f) {
+        // Always accept paths with negative slack
+        acceptance_probability = 1.0f;
+        neg_slack_count++;
+    } else { // slack >= 0.0f
+        if (decay_factor_k == std::numeric_limits<float>::infinity()) {
+            // Handle the edge case where max positive slack was ~0
+            acceptance_probability = (slack < epsilon) ? 1.0f : 0.0f;
+        } else {
+            // Calculate probability using exponential decay: P = exp(-k * slack)
+            // This ensures P(0.0) = exp(0) = 1.0
+            acceptance_probability = std::exp(-decay_factor_k * slack);
+        }
+    }
+
+    // Generate a random number between 0.0 and 1.0
+    float random_draw = uniform_distribution(random_generator);
+
+    // Debugging output for slack > 0.0f
+    if (slack > 0.0f) {
+      std::cout << "Path with positive slack: " << slack << " (Prob: " << acceptance_probability << ", Draw: " << random_draw << ")" << std::endl;
+    }
+
+    // Check if we should keep this path based on probability
+    if (random_draw >= acceptance_probability) {
+      // std::cout << "Skipping path with slack: " << slack << " (Prob: " << acceptance_probability << ", Draw: " << random_draw << ")" << std::endl; // Optional debug
+      continue; // Skip this path
+    }
+
+    // *** Path Accepted - Proceed with Metric Collection ***
+    accepted_count++;
+    // std::cout << "Accepted path with slack: " << slack << " (Prob: " << acceptance_probability << ", Draw: " << random_draw << ")" << std::endl; // Optional debug
+
     // Expand the path, iterate over each pin, fill PinMetrics
     sta::PathExpanded expand(path, sta_);
     // Used for arc delay
@@ -204,6 +284,11 @@ PinSequenceCollector MLGateSizer::collectPinMetrics(sta::PathEndSeq& path_ends)
     // If the current path was valid, finalize() would have appended the path to the collector
     total_paths_extracted_ = collector.getSequenceCount();
   }
+
+  // Print summary of path processing
+  std::cout << "Path processing complete. Total paths considered: " << path_count
+            << ", Paths with negative slack: " << neg_slack_count
+            << ", Paths accepted for metrics: " << accepted_count << std::endl;
 
   return collector;
 }
