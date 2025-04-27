@@ -170,6 +170,7 @@ PinSequenceCollector MLGateSizer::collectPinMetrics(sta::PathEndSeq& path_ends)
   sta::Corner* corner = sta_->cmdCorner();
 
 
+  bool use_stochastic_path_selection = false; // Flag for determining if slack based random path selection is used or not.
   // Random number generation
   std::mt19937 random_generator;
   std::uniform_real_distribution<float> uniform_distribution;
@@ -195,14 +196,19 @@ PinSequenceCollector MLGateSizer::collectPinMetrics(sta::PathEndSeq& path_ends)
 
   if (target_slack_for_p01 > epsilon) {
       decay_factor_k = log10 / target_slack_for_p01;
-      std::cout << "Calibrated sampling: MaxPosSlack=" << max_positive_slack
-                << "ns, TargetSlack(P=0.1)=" << target_slack_for_p01
-                << "ns, DecayFactor(k)=" << decay_factor_k << std::endl;
+      if (use_stochastic_path_selection) {
+        std::cout << "Calibrated sampling: MaxPosSlack=" << max_positive_slack
+        << "ns, TargetSlack(P=0.1)=" << target_slack_for_p01
+        << "ns, DecayFactor(k)=" << decay_factor_k << std::endl;
+      }
+
   } else {
       // Handle cases where max positive slack is zero or very small.
       // In this case, effectively only slack = 0.0 has P=1, others P=0.
       decay_factor_k = std::numeric_limits<float>::infinity(); // Acts as immediate decay
-      std::cout << "Calibrated sampling: MaxPosSlack near zero. Only slack <= 0 will be reliably accepted." << std::endl;
+      if (use_stochastic_path_selection) {
+        std::cout << "Calibrated sampling: MaxPosSlack near zero. Only slack <= 0 will be reliably accepted." << std::endl;
+      }
   }
   // --- End Sampling Parameter Calculation ---
 
@@ -219,41 +225,44 @@ PinSequenceCollector MLGateSizer::collectPinMetrics(sta::PathEndSeq& path_ends)
     }
     const float slack = path_end->slack(sta_); // slack information
     
-    // *** Calibrated Slack-Based Sampling Decision ***
-    float acceptance_probability = 0.0f;
+    if (use_stochastic_path_selection) {
+      // *** Calibrated Slack-Based Sampling Decision ***
+      float acceptance_probability = 0.0f;
 
-    if (slack < 0.0f) {
-        // Always accept paths with negative slack
-        acceptance_probability = 1.0f;
-        neg_slack_count++;
-    } else { // slack >= 0.0f
-        if (decay_factor_k == std::numeric_limits<float>::infinity()) {
-            // Handle the edge case where max positive slack was ~0
-            acceptance_probability = (slack < epsilon) ? 1.0f : 0.0f;
-        } else {
-            // Calculate probability using exponential decay: P = exp(-k * slack)
-            // This ensures P(0.0) = exp(0) = 1.0
-            acceptance_probability = std::exp(-decay_factor_k * slack);
-        }
+      if (slack < 0.0f) {
+          // Always accept paths with negative slack
+          acceptance_probability = 1.0f;
+          neg_slack_count++;
+      } else { // slack >= 0.0f
+          if (decay_factor_k == std::numeric_limits<float>::infinity()) {
+              // Handle the edge case where max positive slack was ~0
+              acceptance_probability = (slack < epsilon) ? 1.0f : 0.0f;
+          } else {
+              // Calculate probability using exponential decay: P = exp(-k * slack)
+              // This ensures P(0.0) = exp(0) = 1.0
+              acceptance_probability = std::exp(-decay_factor_k * slack);
+          }
+      }
+
+      // Generate a random number between 0.0 and 1.0
+      float random_draw = uniform_distribution(random_generator);
+
+      // Debugging output for slack > 0.0f
+      if (slack > 0.0f) {
+        std::cout << "Path with positive slack: " << slack << " (Prob: " << acceptance_probability << ", Draw: " << random_draw << ")" << std::endl;
+      }
+
+      // Check if we should keep this path based on probability
+      if (random_draw >= acceptance_probability) {
+        // std::cout << "Skipping path with slack: " << slack << " (Prob: " << acceptance_probability << ", Draw: " << random_draw << ")" << std::endl; // Optional debug
+        continue; // Skip this path
+      }
+
+      // *** Path Accepted - Proceed with Metric Collection ***
+      accepted_count++;
+      // std::cout << "Accepted path with slack: " << slack << " (Prob: " << acceptance_probability << ", Draw: " << random_draw << ")" << std::endl; // Optional debug
+
     }
-
-    // Generate a random number between 0.0 and 1.0
-    float random_draw = uniform_distribution(random_generator);
-
-    // Debugging output for slack > 0.0f
-    if (slack > 0.0f) {
-      std::cout << "Path with positive slack: " << slack << " (Prob: " << acceptance_probability << ", Draw: " << random_draw << ")" << std::endl;
-    }
-
-    // Check if we should keep this path based on probability
-    if (random_draw >= acceptance_probability) {
-      // std::cout << "Skipping path with slack: " << slack << " (Prob: " << acceptance_probability << ", Draw: " << random_draw << ")" << std::endl; // Optional debug
-      continue; // Skip this path
-    }
-
-    // *** Path Accepted - Proceed with Metric Collection ***
-    accepted_count++;
-    // std::cout << "Accepted path with slack: " << slack << " (Prob: " << acceptance_probability << ", Draw: " << random_draw << ")" << std::endl; // Optional debug
 
     // Expand the path, iterate over each pin, fill PinMetrics
     sta::PathExpanded expand(path, sta_);
@@ -285,10 +294,12 @@ PinSequenceCollector MLGateSizer::collectPinMetrics(sta::PathEndSeq& path_ends)
     total_paths_extracted_ = collector.getSequenceCount();
   }
 
-  // Print summary of path processing
-  std::cout << "Path processing complete. Total paths considered: " << path_count
-            << ", Paths with negative slack: " << neg_slack_count
-            << ", Paths accepted for metrics: " << accepted_count << std::endl;
+  if (use_stochastic_path_selection) {
+    // Print summary of path processing
+    std::cout << "Path processing complete. Total paths considered: " << path_count
+              << ", Paths with negative slack: " << neg_slack_count
+              << ", Paths accepted for metrics: " << accepted_count << std::endl;
+  }
 
   return collector;
 }
@@ -638,6 +649,8 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
   // Retrieve the critical path for the endpoint
   // PathEnds represent search endpoints that are either unconstrained or
   // constrained by a timing check, output delay, data check, or path delay.
+  float path_slack_min = -sta::INF;
+  float path_slack_max = 1e-11; // corresponds to 0.01ns defined in original TransSizer paper //sta::INF;
   sta::PathEndSeq path_ends = sta_->search()->findPathEnds(
       nullptr,  // e_from, return paths from a list of clocks/instances/ports/register clock pins or latch data pins
       nullptr,  // e_thrus, return paths through a list of instances/ports/nets
@@ -651,8 +664,8 @@ void MLGateSizer::getEndpointAndCriticalPaths(const std::string& output_base_pat
       crit_path_group_count,//5 * endpoints->size(),//10,//5 * endpoints->size(),//100, //10 * endpoints->size(), // group_count, number of paths in total
       crit_path_endpoint_count, //endpoints->size(),      // endpoint_count, number of paths for each endpoint
       true,                   // unique_pins
-      -sta::INF,
-      sta::INF, // slack_min, slack_max
+      path_slack_min,
+      path_slack_max, // slack_min, slack_max
       true,     // sort_by_slack
       nullptr,  // group_names
       true,     // setup
